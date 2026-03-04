@@ -52,12 +52,7 @@ pub fn root(self: CSMT) -> ByteArray {
 }
 
 /// Test whether a key-value pair is present in the trie.
-pub fn has(
-  self: CSMT,
-  key: ByteArray,
-  value: ByteArray,
-  proof: Proof,
-) -> Bool {
+pub fn has(self: CSMT, key: ByteArray, value: ByteArray, proof: Proof) -> Bool {
   including(key, value, proof) == self.root
 }
 

@@ -48,6 +48,7 @@
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.aiken
+            pkgs.just
           ];
         };
       }
