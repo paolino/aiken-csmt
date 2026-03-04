@@ -1,63 +1,57 @@
-//// A Compact Sparse Merkle Trie (CSMT) is a key:value structure similar to
-//// a Merkle Patricia Forestry, but where keys are NOT hashed before insertion.
+//// A Compact Sparse Merkle Trie (CSMT) — binary trie with path compression
+//// and non-hashed keys, preserving key ordering.
 ////
-//// This preserves key ordering in the trie, enabling use cases like FIFO
-//// queues where insertion order matters and non-existence proofs can
-//// demonstrate that no key smaller than a given value exists.
-////
-//// The trie uses radix 16 (hexadecimal nibbles). Values are still hashed
-//// with blake2b_256 for compact commitment.
+//// On-chain verifier matching the Haskell CSMT implementation in haskell-mts.
+//// Provides the same API surface as aiken-lang/merkle-patricia-forestry:
+//// `has`, `miss`, `insert`, `delete`, `update`.
 ////
 //// ## Differences from MPF
 ////
-//// - Keys are used directly as trie paths (not hashed)
-//// - Key ordering is preserved in the trie structure
-//// - Variable-length keys are supported
-//// - Non-existence proofs can reason about ordering
+//// - Binary trie (L/R) instead of radix-16
+//// - Path compression via "jumps" (Indirect type)
+//// - Keys are NOT hashed — ordering is preserved
+//// - Proof format: list of (consumed, sibling) steps from leaf to root
 
-use aiken/builtin.{blake2b_256, slice_bytearray}
-use aiken/csmt/helpers.{combine, nibble, nibbles, suffix}
-use aiken/csmt/merkling.{merkle_16, null_hash, sparse_merkle_16}
+use aiken/builtin.{blake2b_256, cons_bytearray, slice_bytearray}
+use aiken/csmt/bits.{key_to_bitpath}
+use aiken/csmt/hashing.{
+  Indirect, add_with_direction, null_hash, root_hash, serialize_key,
+}
 use aiken/primitive/bytearray
 
 // -----------------------------------------------------------------------------
-// ------------------------------------------------------------------- Constants
+// ---------------------------------------------------------------- CSMT opaque
 // -----------------------------------------------------------------------------
 
-/// # of bytes
-const blake2b_256_digest_size = 32
-
-// -----------------------------------------------------------------------------
-// ------------------------------------------------- Compact Sparse Merkle Trie
-// -----------------------------------------------------------------------------
-
-/// A Compact Sparse Merkle Trie, typically constructed from a root hash digest
-/// using [`from_root`](#from_root).
+/// A Compact Sparse Merkle Trie, represented by its root hash.
 pub opaque type CSMT {
   root: ByteArray,
 }
 
 // ## Constructing
 
-/// Construct a new [CSMT](#CSMT) from its root.
-///
-/// The root MUST be 32-bytes long. For an empty trie, see [empty](#empty).
+/// Construct a CSMT from a known root hash. Must be 32 bytes.
 pub fn from_root(root: ByteArray) -> CSMT {
-  expect bytearray.length(root) == blake2b_256_digest_size
+  expect bytearray.length(root) == 32
   CSMT { root }
 }
 
-/// Construct a new empty [CSMT](#CSMT).
+/// An empty CSMT.
 pub const empty: CSMT = CSMT { root: null_hash }
 
 // ## Querying
 
-/// Check whether a [CSMT](#CSMT) is empty.
+/// Check whether the trie is empty.
 pub fn is_empty(self: CSMT) -> Bool {
   self.root == null_hash
 }
 
-/// Test whether an element is present in the trie with a specific value.
+/// Get the root hash.
+pub fn root(self: CSMT) -> ByteArray {
+  self.root
+}
+
+/// Test whether a key-value pair is present in the trie.
 pub fn has(
   self: CSMT,
   key: ByteArray,
@@ -67,19 +61,14 @@ pub fn has(
   including(key, value, proof) == self.root
 }
 
-/// Test whether a key is missing from the trie.
+/// Test whether a key is absent from the trie.
 pub fn miss(self: CSMT, key: ByteArray, proof: Proof) -> Bool {
   excluding(key, proof) == self.root
 }
 
-// # Modifying
+// ## Modifying
 
-/// Insert an element in the trie.
-///
-/// #### Fails when
-///
-/// - The [Proof](#Proof) is invalid.
-/// - There's already an element in the trie at the given key.
+/// Insert a key-value pair. Fails if the key already exists.
 pub fn insert(
   self: CSMT,
   key: ByteArray,
@@ -90,12 +79,7 @@ pub fn insert(
   CSMT { root: including(key, value, proof) }
 }
 
-/// Remove an element from the trie.
-///
-/// #### Fails when
-///
-/// - the [Proof](#Proof) is invalid
-/// - there is no element in the trie at the given key
+/// Delete a key-value pair. Fails if the key doesn't exist with that value.
 pub fn delete(
   self: CSMT,
   key: ByteArray,
@@ -106,12 +90,7 @@ pub fn delete(
   CSMT { root: excluding(key, proof) }
 }
 
-/// Update an element in the trie with a new value.
-///
-/// #### Fails when
-///
-/// - The [Proof](#Proof) is invalid.
-/// - There's no element in the trie at the given key.
+/// Update a key's value. Fails if the key doesn't exist with old_value.
 pub fn update(
   self: CSMT,
   key: ByteArray,
@@ -123,85 +102,65 @@ pub fn update(
   CSMT { root: including(key, new_value, proof) }
 }
 
-// ## Transforming
+// -----------------------------------------------------------------------------
+// ----------------------------------------------------------------- Proof types
+// -----------------------------------------------------------------------------
 
-/// Get the root hash digest of a [CSMT](#CSMT).
-pub fn root(self: CSMT) -> ByteArray {
-  self.root
+/// A proof for inclusion/exclusion operations.
+pub type Proof {
+  /// The jump path at the root node (BitPath: each byte is 0 or 1).
+  root_jump: ByteArray,
+  /// Steps from leaf toward root. Each step records the consumed
+  /// bit count and the sibling's indirect value.
+  steps: List<ProofStep>,
 }
 
-// -----------------------------------------------------------------------------
-// ----------------------------------------------------------------------- Proof
-// -----------------------------------------------------------------------------
-
-/// A Proof is a list of steps processed from left to right, corresponding
-/// to neighbor nodes along the path to the element being proved.
-pub type Proof =
-  List<ProofStep>
-
-/// Three kinds of proof steps: Branch, Fork and Leaf.
+/// A single step in a proof.
 pub type ProofStep {
-  Branch { skip: Int, neighbors: ByteArray }
-  Fork { skip: Int, neighbor: Neighbor }
-  Leaf { skip: Int, key: ByteArray, value: ByteArray }
-}
-
-/// A neighbor node used in a proof.
-pub type Neighbor {
-  nibble: Int,
-  prefix: ByteArray,
-  root: ByteArray,
+  /// Number of key bits consumed (1 for direction + jump length).
+  consumed: Int,
+  /// The sibling node's indirect value (jump + hash).
+  sibling: Indirect,
 }
 
 // -----------------------------------------------------------------------------
 // ------------------------------------------------------------------- including
 // -----------------------------------------------------------------------------
 
-/// Compute the resulting hash digest from a Proof associated with an
-/// arbitrary value. Unlike MPF, the key is NOT hashed — it is used
-/// directly as the trie path.
+/// Compute the root hash assuming the key IS present with the given value.
 fn including(key: ByteArray, value: ByteArray, proof: Proof) -> ByteArray {
-  do_including(key, blake2b_256(value), 0, proof)
+  let key_bits = key_to_bitpath(key)
+  let leaf_hash = blake2b_256(value)
+  let rj_len = bytearray.length(proof.root_jump)
+  let key_after_root =
+    slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
+  let root_value =
+    fold_including(
+      leaf_hash,
+      key_after_root,
+      bytearray.length(key_after_root),
+      proof.steps,
+    )
+  root_hash(proof.root_jump, root_value)
 }
 
-test including_empty_proof() {
-  let (k, v) = (#"0102", "bar")
-  including(k, v, []) == combine(suffix(k, 0), blake2b_256(v))
-}
-
-fn do_including(
-  path: ByteArray,
-  value: ByteArray,
+/// Walk proof steps from leaf to root, combining hashes.
+/// Cursor starts at the end of key_after_root and moves toward 0.
+fn fold_including(
+  acc: ByteArray,
+  key_ar: ByteArray,
   cursor: Int,
-  proof: Proof,
+  steps: List<ProofStep>,
 ) -> ByteArray {
-  when proof is {
-    [] -> combine(suffix(path, cursor), value)
-
-    [Branch { skip, neighbors }, ..steps] -> {
-      let next_cursor = cursor + skip
-      let root = do_including(path, value, next_cursor + 1, steps)
-      do_branch(path, cursor, next_cursor, root, neighbors)
-    }
-
-    [Fork { skip, neighbor }, ..steps] -> {
-      let next_cursor = cursor + skip
-      let root = do_including(path, value, next_cursor + 1, steps)
-      do_fork(path, cursor, next_cursor, root, neighbor)
-    }
-
-    [Leaf { skip, key, value: neighbor_value }, ..steps] -> {
-      let next_cursor = cursor + skip
-      let root = do_including(path, value, next_cursor + 1, steps)
-
-      let neighbor =
-        Neighbor {
-          prefix: suffix(key, next_cursor + 1),
-          nibble: nibble(key, next_cursor),
-          root: neighbor_value,
-        }
-
-      do_fork(path, cursor, next_cursor, root, neighbor)
+  when steps is {
+    [] -> acc
+    [ProofStep { consumed, sibling }, ..rest] -> {
+      let new_cursor = cursor - consumed
+      let direction = bytearray.at(key_ar, new_cursor)
+      let step_jump = slice_bytearray(new_cursor + 1, consumed - 1, key_ar)
+      let my_indirect = Indirect { jump: step_jump, hash: acc }
+      let new_acc = add_with_direction(direction, my_indirect, sibling)
+      fold_including(new_acc, key_ar, new_cursor, rest)
     }
   }
 }
@@ -210,108 +169,120 @@ fn do_including(
 // ------------------------------------------------------------------- excluding
 // -----------------------------------------------------------------------------
 
-/// Similar to including, but computes the root obtained from walking the
-/// proof without including the element. Key is NOT hashed.
+/// Compute the root hash assuming the key is NOT present.
+///
+/// At the bottom level, the sibling absorbs the branch (its jump extends
+/// with the opposite direction bit). Upper levels combine normally.
 fn excluding(key: ByteArray, proof: Proof) -> ByteArray {
-  do_excluding(key, 0, proof)
+  let key_bits = key_to_bitpath(key)
+  let rj_len = bytearray.length(proof.root_jump)
+  let key_after_root =
+    slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
+  do_excluding(key_after_root, proof)
 }
 
-test excluding_empty_proof() {
-  excluding(#"0102", []) == empty.root
-}
-
-fn do_excluding(path: ByteArray, cursor: Int, proof: Proof) -> ByteArray {
-  when proof is {
+fn do_excluding(key_after_root: ByteArray, proof: Proof) -> ByteArray {
+  when proof.steps is {
+    // No steps: tree is empty without this element
     [] -> null_hash
 
-    [Branch { skip, neighbors }, ..steps] -> {
-      let next_cursor = cursor + skip
-      let root = do_excluding(path, next_cursor + 1, steps)
-      do_branch(path, cursor, next_cursor, root, neighbors)
-    }
+    // At least one step: collapse the bottom branch
+    [bottom_step, ..rest_steps] -> {
+      let cursor = bytearray.length(key_after_root)
+      let bottom_cursor = cursor - bottom_step.consumed
+      let direction = bytearray.at(key_after_root, bottom_cursor)
+      let opposite = 1 - direction
 
-    [Fork { skip, neighbor }] -> {
-      let neighbor_prefix = bytearray.push(neighbor.prefix, neighbor.nibble)
-      let prefix =
-        if skip == 0 {
-          neighbor_prefix
-        } else {
-          bytearray.concat(
-            nibbles(path, cursor, cursor + skip),
-            neighbor_prefix,
+      // Sibling absorbs the branch: prepend opposite direction to its jump
+      let collapsed =
+        Indirect {
+          jump: cons_bytearray(opposite, bottom_step.sibling.jump),
+          hash: bottom_step.sibling.hash,
+        }
+
+      when rest_steps is {
+        // Collapsed node IS the whole tree
+        [] ->
+          root_hash(
+            bytearray.concat(proof.root_jump, collapsed.jump),
+            collapsed.hash,
           )
+
+        // Use collapsed as our indirect at the next level, then normal
+        [next_step, ..upper_steps] -> {
+          let next_cursor = bottom_cursor - next_step.consumed
+          let next_direction = bytearray.at(key_after_root, next_cursor)
+          let acc =
+            add_with_direction(next_direction, collapsed, next_step.sibling)
+          let root_value =
+            fold_including(acc, key_after_root, next_cursor, upper_steps)
+          root_hash(proof.root_jump, root_value)
         }
-      combine(prefix, neighbor.root)
-    }
-
-    [Fork { skip, neighbor }, ..steps] -> {
-      let next_cursor = cursor + skip
-      let root = do_excluding(path, next_cursor + 1, steps)
-      do_fork(path, cursor, next_cursor, root, neighbor)
-    }
-
-    [Leaf { key, value, .. }] -> combine(suffix(key, cursor), value)
-
-    [Leaf { skip, key, value }, ..steps] -> {
-      let next_cursor = cursor + skip
-      let root = do_excluding(path, next_cursor + 1, steps)
-
-      let neighbor =
-        Neighbor {
-          prefix: suffix(key, next_cursor + 1),
-          nibble: nibble(key, next_cursor),
-          root: value,
-        }
-
-      do_fork(path, cursor, next_cursor, root, neighbor)
+      }
     }
   }
 }
 
 // -----------------------------------------------------------------------------
-// --------------------------------------------------------- do_branch / do_fork
+// ----------------------------------------------------------------- Basic tests
 // -----------------------------------------------------------------------------
 
-fn do_branch(
-  path: ByteArray,
-  cursor: Int,
-  next_cursor: Int,
-  root: ByteArray,
-  neighbors: ByteArray,
-) -> ByteArray {
-  let branch = nibble(path, next_cursor)
-
-  let prefix = nibbles(path, cursor, next_cursor)
-
-  let select =
-    slice_bytearray(_, blake2b_256_digest_size, neighbors)
-
-  combine(
-    prefix,
-    merkle_16(branch, root, select(0), select(32), select(64), select(96)),
-  )
+test empty_is_empty() {
+  is_empty(empty)
 }
 
-fn do_fork(
-  path: ByteArray,
-  cursor: Int,
-  next_cursor: Int,
-  root: ByteArray,
-  neighbor: Neighbor,
-) -> ByteArray {
-  let branch = nibble(path, next_cursor)
+test from_root_not_empty() {
+  let some_hash =
+    #"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  !is_empty(from_root(some_hash))
+}
 
-  let prefix = nibbles(path, cursor, next_cursor)
+// Single-element tree: insert into empty, then verify presence.
+// For a single element, root_jump = full key bitpath (the root Indirect
+// has jump = fullKey, hash = blake2b_256(value)).
+test single_element_insert_has() {
+  let key = #"01"
+  let value = #"cafe"
+  let key_bits = key_to_bitpath(key)
+  let proof = Proof { root_jump: key_bits, steps: [] }
 
-  expect branch != neighbor.nibble
+  let trie = insert(empty, key, value, proof)
 
-  combine(
-    prefix,
-    sparse_merkle_16(
-      branch,
-      root,
-      neighbor.nibble,
-      combine(neighbor.prefix, neighbor.root),
-    ),
-  )
+  let expected_root = root_hash(key_bits, blake2b_256(value))
+  root(trie) == expected_root
+}
+
+// Single element: insert then delete returns empty
+test single_element_insert_delete() {
+  let key = #"01"
+  let value = #"cafe"
+  let key_bits = key_to_bitpath(key)
+  let proof = Proof { root_jump: key_bits, steps: [] }
+
+  let trie = insert(empty, key, value, proof)
+  let trie2 = delete(trie, key, value, proof)
+  is_empty(trie2)
+}
+
+// Verify that including with empty proof produces expected hash.
+// root_jump = full key bitpath for a single element.
+test including_empty_proof() {
+  let key = #"ab"
+  let value = #"cd"
+  let key_bits = key_to_bitpath(key)
+  let proof = Proof { root_jump: key_bits, steps: [] }
+  let result = including(key, value, proof)
+  result == root_hash(key_bits, blake2b_256(value))
+}
+
+// Verify excluding with empty proof gives null_hash
+test excluding_empty_proof() {
+  let key = #"ab"
+  let proof = Proof { root_jump: #"", steps: [] }
+  excluding(key, proof) == null_hash
+}
+
+// Verify that the serialization of an empty key is correct
+test serialize_empty_key() {
+  serialize_key(#"") == #"0000"
 }
