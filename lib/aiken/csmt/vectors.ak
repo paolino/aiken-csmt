@@ -12,12 +12,12 @@ test vec_has_single() {
     from_root(
       #"9a45be5c807ec78e51e2676529adf0dd38cbc0a148e19a6117b4d0bc62a8b844",
     )
-  let proof = Proof { root_jump: #[1, 0, 1, 0, 1, 0, 1, 1], steps: [] }
+  let proof = Proof { root_jump: #"0100010001000101", steps: [] }
   has(trie, #"ab", #"cd", proof)
 }
 
 test vec_insert_into_empty() {
-  let proof = Proof { root_jump: #[1, 0, 1, 0, 1, 0, 1, 1], steps: [] }
+  let proof = Proof { root_jump: #"0100010001000101", steps: [] }
   let trie = insert(empty, #"ab", #"cd", proof)
   root(trie) == #"9a45be5c807ec78e51e2676529adf0dd38cbc0a148e19a6117b4d0bc62a8b844"
 }
@@ -34,7 +34,7 @@ test vec_has_two_left() {
         ProofStep {
           consumed: 8,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"4324d0dc945c746e3be93be15b636ec1684108806912a479e8a34b2858be114a",
           },
         },
@@ -55,7 +55,7 @@ test vec_has_two_right() {
         ProofStep {
           consumed: 8,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"55951e629cad560ea5f8be280c35d8788ee84324b842fee1b41c546efb62d2d5",
           },
         },
@@ -71,12 +71,12 @@ test vec_has_shared_prefix_left() {
     )
   let proof =
     Proof {
-      root_jump: #[1, 0, 1, 0, 1, 0, 1, 1],
+      root_jump: #"0100010001000101",
       steps: [
         ProofStep {
           consumed: 8,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"95c3003a78585e0db8c9496f6deef4de0ff000994b8534cd66d4fe96bb21ddd3",
           },
         },
@@ -92,12 +92,12 @@ test vec_has_shared_prefix_right() {
     )
   let proof =
     Proof {
-      root_jump: #[1, 0, 1, 0, 1, 0, 1, 1],
+      root_jump: #"0100010001000101",
       steps: [
         ProofStep {
           consumed: 8,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"4c54f47d69e097eed691c686ac18444a10d4abe934c311d0fffba9a3928f9e71",
           },
         },
@@ -118,14 +118,14 @@ test vec_has_three_a() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"bb30a42c1e62f0afda5f0a4e8a562f7a13a24cea00ee81917b86b89e801314aa",
           },
         },
         ProofStep {
           consumed: 1,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"e88bd757ad5b9bedf372d8d3f0cf6c962a469db61a265f6418e1ffed86da29ec",
           },
         },
@@ -146,14 +146,14 @@ test vec_has_three_b() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"ee155ace9c40292074cb6aff8c9ccdd273c81648ff1149ef36bcea6ebb8a3e25",
           },
         },
         ProofStep {
           consumed: 1,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"e88bd757ad5b9bedf372d8d3f0cf6c962a469db61a265f6418e1ffed86da29ec",
           },
         },
@@ -195,7 +195,7 @@ test vec_has_four_first() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"ae85d245a3d00bfde01f59f3c4fe0b4bfae1cb37e9cf91929eadcea4985711de",
           },
         },
@@ -223,7 +223,7 @@ test vec_has_four_last() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"0fd923ca5e7218c4ba3c3801c26a617ecdbfdaebb9c76ce2eca166e7855efbb8",
           },
         },
@@ -240,7 +240,7 @@ test vec_has_four_last() {
 }
 
 test vec_insert_first() {
-  let proof = Proof { root_jump: #[0, 0, 0, 1, 0, 0, 0, 0], steps: [] }
+  let proof = Proof { root_jump: #"0000000100000000", steps: [] }
   let trie = insert(empty, #"10", #"aa", proof)
   root(trie) == #"776f184b5e95aa8d39580b72b09afff2e4c34094bd6235e1a878623fc723e04d"
 }
@@ -248,12 +248,12 @@ test vec_insert_first() {
 test vec_insert_second() {
   let proof =
     Proof {
-      root_jump: #[0, 0],
+      root_jump: #"0000",
       steps: [
         ProofStep {
           consumed: 6,
           sibling: Indirect {
-            jump: #[1, 0, 0, 0, 0],
+            jump: #"0100000000",
             hash: #"55951e629cad560ea5f8be280c35d8788ee84324b842fee1b41c546efb62d2d5",
           },
         },
@@ -279,7 +279,7 @@ test vec_delete_element() {
         ProofStep {
           consumed: 8,
           sibling: Indirect {
-            jump: #[1, 0, 1, 0, 0, 0, 0],
+            jump: #"01000100000000",
             hash: #"d31e47dec81e167dcb45996b101e0a32a71e8a082002baf8ee0a6924f04e78dd",
           },
         },
@@ -294,7 +294,7 @@ test vec_delete_to_empty() {
     from_root(
       #"63e8a76461d8dfbecf669ce222cd96b69876a4caea4fd94a178dc0bd60e4bf2e",
     )
-  let proof = Proof { root_jump: #[0, 1, 0, 0, 0, 0, 1, 0], steps: [] }
+  let proof = Proof { root_jump: #"0001000000000100", steps: [] }
   let trie2 = delete(trie, #"42", #"ff", proof)
   is_empty(trie2)
 }
@@ -304,7 +304,7 @@ test vec_update_value() {
     from_root(
       #"aeefbe3c2d8d2133bbd31e9cc43be95d0720b7f2f5dad7a5b04648f5584095e0",
     )
-  let proof = Proof { root_jump: #[0, 1, 0, 0, 0, 0, 1, 0], steps: [] }
+  let proof = Proof { root_jump: #"0001000000000100", steps: [] }
   let trie2 = update(trie, #"42", proof, #"0102", #"0304")
   root(trie2) == #"dae7868b410878d51fa9b1b3c7a9153824286445d6590bf0bb2df3f06b658377"
 }
@@ -314,7 +314,7 @@ test vec_pop_single() {
     from_root(
       #"4ec799b000855432de3e3292057fec1688f983d084747ec87b14953fdaafda98",
     )
-  let proof = Proof { root_jump: #[0, 0, 0, 0, 0, 0, 0, 0], steps: [] }
+  let proof = Proof { root_jump: #"0000000000000000", steps: [] }
   let trie2 = pop(trie, #"00", #"aa", proof)
   is_empty(trie2)
 }
@@ -331,14 +331,14 @@ test vec_pop_minimum_of_three() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"bb30a42c1e62f0afda5f0a4e8a562f7a13a24cea00ee81917b86b89e801314aa",
           },
         },
         ProofStep {
           consumed: 1,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"e88bd757ad5b9bedf372d8d3f0cf6c962a469db61a265f6418e1ffed86da29ec",
           },
         },
@@ -360,7 +360,7 @@ test vec_pop_minimum_of_four() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"ae85d245a3d00bfde01f59f3c4fe0b4bfae1cb37e9cf91929eadcea4985711de",
           },
         },
@@ -382,7 +382,7 @@ test vec_pop_max_single() {
     from_root(
       #"ff775584d13aa234636207200670f7ac1deeacf707d66bfcf0e1f351e41babe3",
     )
-  let proof = Proof { root_jump: #[1, 1, 1, 1, 1, 1, 1, 1], steps: [] }
+  let proof = Proof { root_jump: #"0101010101010101", steps: [] }
   let trie2 = pop_max(trie, #"ff", #"aa", proof)
   is_empty(trie2)
 }
@@ -421,7 +421,7 @@ test vec_pop_max_of_four() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"0fd923ca5e7218c4ba3c3801c26a617ecdbfdaebb9c76ce2eca166e7855efbb8",
           },
         },
@@ -439,7 +439,7 @@ test vec_pop_max_of_four() {
 }
 
 test vec_push_min_single() {
-  let proof = Proof { root_jump: #[0, 0, 0, 0, 0, 0, 0, 0], steps: [] }
+  let proof = Proof { root_jump: #"0000000000000000", steps: [] }
   let trie = push_min(empty, #"00", #"aa", proof)
   root(trie) == #"4ec799b000855432de3e3292057fec1688f983d084747ec87b14953fdaafda98"
 }
@@ -456,14 +456,14 @@ test vec_push_min_of_three() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"bb30a42c1e62f0afda5f0a4e8a562f7a13a24cea00ee81917b86b89e801314aa",
           },
         },
         ProofStep {
           consumed: 1,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0, 0],
+            jump: #"00000000000000",
             hash: #"e88bd757ad5b9bedf372d8d3f0cf6c962a469db61a265f6418e1ffed86da29ec",
           },
         },
@@ -485,7 +485,7 @@ test vec_push_min_of_four() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"ae85d245a3d00bfde01f59f3c4fe0b4bfae1cb37e9cf91929eadcea4985711de",
           },
         },
@@ -503,7 +503,7 @@ test vec_push_min_of_four() {
 }
 
 test vec_push_max_single() {
-  let proof = Proof { root_jump: #[1, 1, 1, 1, 1, 1, 1, 1], steps: [] }
+  let proof = Proof { root_jump: #"0101010101010101", steps: [] }
   let trie = push_max(empty, #"ff", #"aa", proof)
   root(trie) == #"ff775584d13aa234636207200670f7ac1deeacf707d66bfcf0e1f351e41babe3"
 }
@@ -542,7 +542,7 @@ test vec_push_max_of_four() {
         ProofStep {
           consumed: 7,
           sibling: Indirect {
-            jump: #[0, 0, 0, 0, 0, 0],
+            jump: #"000000000000",
             hash: #"0fd923ca5e7218c4ba3c3801c26a617ecdbfdaebb9c76ce2eca166e7855efbb8",
           },
         },

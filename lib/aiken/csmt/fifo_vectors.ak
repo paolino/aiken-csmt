@@ -6,7 +6,7 @@ use aiken/csmt/hashing.{Indirect}
 
 test vec_fifo_push_one() {
   let fifo = Fifo { trie: empty, head: 0, tail: 0 }
-  let proof = Proof { root_jump: #[0, 0, 0, 0, 0, 0, 0, 0], steps: [] }
+  let proof = Proof { root_jump: #"0000000000000000", steps: [] }
   let fifo2 = push(fifo, 1, #"aa", proof)
   root_hash(fifo2) == #"4ec799b000855432de3e3292057fec1688f983d084747ec87b14953fdaafda98"
 }
@@ -22,7 +22,7 @@ test vec_fifo_push_two() {
     }
   let proof =
     Proof {
-      root_jump: #[0, 0, 0, 0, 0, 0, 0],
+      root_jump: #"00000000000000",
       steps: [
         ProofStep {
           consumed: 1,
@@ -48,7 +48,7 @@ test vec_fifo_push_three() {
     }
   let proof =
     Proof {
-      root_jump: #[0, 0, 0, 0, 0, 0],
+      root_jump: #"000000000000",
       steps: [
         ProofStep {
           consumed: 2,
@@ -74,7 +74,7 @@ test vec_fifo_pop_one() {
     }
   let proof =
     Proof {
-      root_jump: #[0, 0, 0, 0, 0, 0],
+      root_jump: #"000000000000",
       steps: [
         ProofStep {
           consumed: 1,
@@ -86,7 +86,7 @@ test vec_fifo_pop_one() {
         ProofStep {
           consumed: 1,
           sibling: Indirect {
-            jump: #[0],
+            jump: #"00",
             hash: #"e3f0d5af2a41c8fd042a6ec5fef8acfd591903cbb97a3ab666f08e7c39c8a948",
           },
         },
@@ -107,7 +107,7 @@ test vec_fifo_pop_all() {
     }
   let proof =
     Proof {
-      root_jump: #[0, 0, 0, 0, 0, 0],
+      root_jump: #"000000000000",
       steps: [
         ProofStep {
           consumed: 1,
@@ -119,7 +119,7 @@ test vec_fifo_pop_all() {
         ProofStep {
           consumed: 1,
           sibling: Indirect {
-            jump: #[0],
+            jump: #"00",
             hash: #"e3f0d5af2a41c8fd042a6ec5fef8acfd591903cbb97a3ab666f08e7c39c8a948",
           },
         },
@@ -128,19 +128,19 @@ test vec_fifo_pop_all() {
   let fifo2 = pop(fifo, 1, #"aa", proof)
   let proof2 =
     Proof {
-      root_jump: #[0, 0, 0, 0, 0, 0],
+      root_jump: #"000000000000",
       steps: [
         ProofStep {
           consumed: 2,
           sibling: Indirect {
-            jump: #[0],
+            jump: #"00",
             hash: #"e3f0d5af2a41c8fd042a6ec5fef8acfd591903cbb97a3ab666f08e7c39c8a948",
           },
         },
       ],
     }
   let fifo3 = pop(fifo2, 1, #"bb", proof2)
-  let proof3 = Proof { root_jump: #[0, 0, 0, 0, 0, 0, 1, 0], steps: [] }
+  let proof3 = Proof { root_jump: #"0000000000000100", steps: [] }
   let fifo4 = pop(fifo3, 1, #"cc", proof3)
   is_empty(fifo4)
 }
