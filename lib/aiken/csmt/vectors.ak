@@ -2,7 +2,7 @@
 // Tests the Aiken CSMT against the reference Haskell.
 
 use aiken/csmt.{
-  Proof, ProofStep, delete, empty, from_root, has, insert, is_empty, root,
+  Proof, ProofStep, delete, empty, from_root, has, insert, is_empty, pop, root,
   update,
 }
 use aiken/csmt/hashing.{Indirect}
@@ -307,4 +307,205 @@ test vec_update_value() {
   let proof = Proof { root_jump: #[0, 1, 0, 0, 0, 0, 1, 0], steps: [] }
   let trie2 = update(trie, #"42", proof, #"0102", #"0304")
   root(trie2) == #"dae7868b410878d51fa9b1b3c7a9153824286445d6590bf0bb2df3f06b658377"
+}
+
+// ---------------------------------------------------------------------------
+// ----------------------------------------------------------------- pop tests
+// ---------------------------------------------------------------------------
+
+// Single element is always the minimum — pop returns empty.
+test vec_pop_single() {
+  let trie =
+    from_root(
+      #"9a45be5c807ec78e51e2676529adf0dd38cbc0a148e19a6117b4d0bc62a8b844",
+    )
+  let proof = Proof { root_jump: #[1, 0, 1, 0, 1, 0, 1, 1], steps: [] }
+  is_empty(pop(trie, #"ab", #"cd", proof))
+}
+
+// Two-element trie {#"00": #"aa", #"80": #"bb"}: #"00" is the minimum.
+// Pop should succeed and return a trie with just #"80".
+test vec_pop_two_left() {
+  let trie =
+    from_root(
+      #"11abc6871031864533c39361919fa24379b73cbeebf789a0863684101905c0c1",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 8,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0, 0],
+            hash: #"4324d0dc945c746e3be93be15b636ec1684108806912a479e8a34b2858be114a",
+          },
+        },
+      ],
+    }
+  let trie2 = pop(trie, #"00", #"aa", proof)
+  !is_empty(trie2)
+}
+
+// Two-element trie: #"80" is NOT the minimum — pop should fail.
+test vec_pop_two_right_fails() fail {
+  let trie =
+    from_root(
+      #"11abc6871031864533c39361919fa24379b73cbeebf789a0863684101905c0c1",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 8,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0, 0],
+            hash: #"55951e629cad560ea5f8be280c35d8788ee84324b842fee1b41c546efb62d2d5",
+          },
+        },
+      ],
+    }
+  pop(trie, #"80", #"bb", proof) |> is_empty
+}
+
+// Three-element trie {#"00": #"01", #"40": #"02", #"80": #"03"}:
+// #"00" is the minimum — pop should succeed.
+test vec_pop_three_minimum() {
+  let trie =
+    from_root(
+      #"c79caacc79c111a2b4ed0f19fe832b7d4673f2b7dd3505bbc6beb82b3be6ba0b",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 7,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0],
+            hash: #"bb30a42c1e62f0afda5f0a4e8a562f7a13a24cea00ee81917b86b89e801314aa",
+          },
+        },
+        ProofStep {
+          consumed: 1,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0, 0],
+            hash: #"e88bd757ad5b9bedf372d8d3f0cf6c962a469db61a265f6418e1ffed86da29ec",
+          },
+        },
+      ],
+    }
+  let trie2 = pop(trie, #"00", #"01", proof)
+  !is_empty(trie2)
+}
+
+// Three-element trie: #"40" is NOT the minimum — pop should fail.
+test vec_pop_three_middle_fails() fail {
+  let trie =
+    from_root(
+      #"c79caacc79c111a2b4ed0f19fe832b7d4673f2b7dd3505bbc6beb82b3be6ba0b",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 7,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0],
+            hash: #"ee155ace9c40292074cb6aff8c9ccdd273c81648ff1149ef36bcea6ebb8a3e25",
+          },
+        },
+        ProofStep {
+          consumed: 1,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0, 0],
+            hash: #"e88bd757ad5b9bedf372d8d3f0cf6c962a469db61a265f6418e1ffed86da29ec",
+          },
+        },
+      ],
+    }
+  pop(trie, #"40", #"02", proof) |> is_empty
+}
+
+// Three-element trie: #"80" is NOT the minimum — pop should fail.
+test vec_pop_three_last_fails() fail {
+  let trie =
+    from_root(
+      #"c79caacc79c111a2b4ed0f19fe832b7d4673f2b7dd3505bbc6beb82b3be6ba0b",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 8,
+          sibling: Indirect {
+            jump: #"",
+            hash: #"193c331fc60a76375b176937ab774fb681f21a1192180476c4d2d9d72423b599",
+          },
+        },
+      ],
+    }
+  pop(trie, #"80", #"03", proof) |> is_empty
+}
+
+// Four-element trie: #"00" is the minimum — pop should succeed.
+test vec_pop_four_minimum() {
+  let trie =
+    from_root(
+      #"1faeb5ccbeebe31365b83f192c005c3f40df7049bf676deaf027a0649937d770",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 7,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0],
+            hash: #"ae85d245a3d00bfde01f59f3c4fe0b4bfae1cb37e9cf91929eadcea4985711de",
+          },
+        },
+        ProofStep {
+          consumed: 1,
+          sibling: Indirect {
+            jump: #"",
+            hash: #"1e6118b4ea7b1727b61a42bfd6b4ce81b2559c9e271ceeee78d0714c4ebe30dd",
+          },
+        },
+      ],
+    }
+  let trie2 = pop(trie, #"00", #"10", proof)
+  !is_empty(trie2)
+}
+
+// Four-element trie: #"c0" is NOT the minimum — pop should fail.
+test vec_pop_four_last_fails() fail {
+  let trie =
+    from_root(
+      #"1faeb5ccbeebe31365b83f192c005c3f40df7049bf676deaf027a0649937d770",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 7,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0],
+            hash: #"0fd923ca5e7218c4ba3c3801c26a617ecdbfdaebb9c76ce2eca166e7855efbb8",
+          },
+        },
+        ProofStep {
+          consumed: 1,
+          sibling: Indirect {
+            jump: #"",
+            hash: #"d58cc2b187edc4bd03263f0602039d58055af9401677daa12a249f633f5a0504",
+          },
+        },
+      ],
+    }
+  pop(trie, #"c0", #"40", proof) |> is_empty
 }

@@ -3,7 +3,7 @@
 ////
 //// On-chain verifier matching the Haskell CSMT implementation in haskell-mts.
 //// Provides the same API surface as aiken-lang/merkle-patricia-forestry:
-//// `has`, `miss`, `insert`, `delete`, `update`.
+//// `has`, `miss`, `insert`, `delete`, `update`, `pop`.
 ////
 //// ## Differences from MPF
 ////
@@ -97,6 +97,20 @@ pub fn update(
   CSMT { root: including(key, new_value, proof) }
 }
 
+/// Remove the minimum element from the trie. Verifies that the
+/// key-value pair exists AND that it is the smallest key (every
+/// branch decision goes left). Returns the trie without the element.
+///
+/// #### Fails when
+///
+/// - The proof is invalid.
+/// - The element doesn't exist with that value.
+/// - The key is not the minimum (some branch goes right).
+pub fn pop(self: CSMT, key: ByteArray, value: ByteArray, proof: Proof) -> CSMT {
+  expect including_minimum(key, value, proof) == self.root
+  CSMT { root: excluding(key, proof) }
+}
+
 // -----------------------------------------------------------------------------
 // ----------------------------------------------------------------- Proof types
 // -----------------------------------------------------------------------------
@@ -156,6 +170,53 @@ fn fold_including(
       let my_indirect = Indirect { jump: step_jump, hash: acc }
       let new_acc = add_with_direction(direction, my_indirect, sibling)
       fold_including(new_acc, key_ar, new_cursor, rest)
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// -------------------------------------------------------- including + minimum
+// -----------------------------------------------------------------------------
+
+/// Like `including`, but also asserts the key is the minimum: every
+/// branch direction must be 0 (left).
+fn including_minimum(
+  key: ByteArray,
+  value: ByteArray,
+  proof: Proof,
+) -> ByteArray {
+  let key_bits = key_to_bitpath(key)
+  let leaf_hash = blake2b_256(value)
+  let rj_len = bytearray.length(proof.root_jump)
+  let key_after_root =
+    slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
+  let root_value =
+    fold_including_minimum(
+      leaf_hash,
+      key_after_root,
+      bytearray.length(key_after_root),
+      proof.steps,
+    )
+  root_hash(proof.root_jump, root_value)
+}
+
+/// Same as fold_including but expects direction == 0 at every step.
+fn fold_including_minimum(
+  acc: ByteArray,
+  key_ar: ByteArray,
+  cursor: Int,
+  steps: List<ProofStep>,
+) -> ByteArray {
+  when steps is {
+    [] -> acc
+    [ProofStep { consumed, sibling }, ..rest] -> {
+      let new_cursor = cursor - consumed
+      let direction = bytearray.at(key_ar, new_cursor)
+      expect direction == 0
+      let step_jump = slice_bytearray(new_cursor + 1, consumed - 1, key_ar)
+      let my_indirect = Indirect { jump: step_jump, hash: acc }
+      let new_acc = add_with_direction(direction, my_indirect, sibling)
+      fold_including_minimum(new_acc, key_ar, new_cursor, rest)
     }
   }
 }
