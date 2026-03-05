@@ -3,7 +3,8 @@
 ////
 //// On-chain verifier matching the Haskell CSMT implementation in haskell-mts.
 //// Provides the same API surface as aiken-lang/merkle-patricia-forestry:
-//// `has`, `miss`, `insert`, `delete`, `update`, `pop`.
+//// `has`, `miss`, `insert`, `delete`, `update`, `pop`, `pop_max`,
+//// `push_min`, `push_max`.
 ////
 //// ## Differences from MPF
 ////
@@ -111,6 +112,63 @@ pub fn pop(self: CSMT, key: ByteArray, value: ByteArray, proof: Proof) -> CSMT {
   CSMT { root: excluding(key, proof) }
 }
 
+/// Remove the maximum element from the trie. Verifies that the
+/// key-value pair exists AND that it is the largest key (every
+/// branch decision goes right). Returns the trie without the element.
+///
+/// #### Fails when
+///
+/// - The proof is invalid.
+/// - The element doesn't exist with that value.
+/// - The key is not the maximum (some branch goes left).
+pub fn pop_max(
+  self: CSMT,
+  key: ByteArray,
+  value: ByteArray,
+  proof: Proof,
+) -> CSMT {
+  expect including_maximum(key, value, proof) == self.root
+  CSMT { root: excluding(key, proof) }
+}
+
+/// Insert the minimum element into the trie. Verifies that the
+/// key is absent AND that it would be the smallest key (every
+/// branch decision goes left). Returns the trie with the element.
+///
+/// #### Fails when
+///
+/// - The proof is invalid.
+/// - The key already exists.
+/// - The key is not the minimum (some branch goes right).
+pub fn push_min(
+  self: CSMT,
+  key: ByteArray,
+  value: ByteArray,
+  proof: Proof,
+) -> CSMT {
+  expect excluding_minimum(key, proof) == self.root
+  CSMT { root: including(key, value, proof) }
+}
+
+/// Insert the maximum element into the trie. Verifies that the
+/// key is absent AND that it would be the largest key (every
+/// branch decision goes right). Returns the trie with the element.
+///
+/// #### Fails when
+///
+/// - The proof is invalid.
+/// - The key already exists.
+/// - The key is not the maximum (some branch goes left).
+pub fn push_max(
+  self: CSMT,
+  key: ByteArray,
+  value: ByteArray,
+  proof: Proof,
+) -> CSMT {
+  expect excluding_maximum(key, proof) == self.root
+  CSMT { root: including(key, value, proof) }
+}
+
 // -----------------------------------------------------------------------------
 // ----------------------------------------------------------------- Proof types
 // -----------------------------------------------------------------------------
@@ -175,12 +233,32 @@ fn fold_including(
 }
 
 // -----------------------------------------------------------------------------
-// -------------------------------------------------------- including + minimum
+// ------------------------------------------------------- including + extremum
 // -----------------------------------------------------------------------------
 
 /// Like `including`, but also asserts the key is the minimum: every
 /// branch direction must be 0 (left).
 fn including_minimum(
+  key: ByteArray,
+  value: ByteArray,
+  proof: Proof,
+) -> ByteArray {
+  including_extremum(0, key, value, proof)
+}
+
+/// Like `including`, but also asserts the key is the maximum: every
+/// branch direction must be 1 (right).
+fn including_maximum(
+  key: ByteArray,
+  value: ByteArray,
+  proof: Proof,
+) -> ByteArray {
+  including_extremum(1, key, value, proof)
+}
+
+/// Like `including`, but asserts every branch direction equals `expected_dir`.
+fn including_extremum(
+  expected_dir: Int,
   key: ByteArray,
   value: ByteArray,
   proof: Proof,
@@ -191,7 +269,8 @@ fn including_minimum(
   let key_after_root =
     slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
   let root_value =
-    fold_including_minimum(
+    fold_including_extremum(
+      expected_dir,
       leaf_hash,
       key_after_root,
       bytearray.length(key_after_root),
@@ -200,8 +279,9 @@ fn including_minimum(
   root_hash(proof.root_jump, root_value)
 }
 
-/// Same as fold_including but expects direction == 0 at every step.
-fn fold_including_minimum(
+/// Same as fold_including but expects direction == expected_dir at every step.
+fn fold_including_extremum(
+  expected_dir: Int,
   acc: ByteArray,
   key_ar: ByteArray,
   cursor: Int,
@@ -212,11 +292,11 @@ fn fold_including_minimum(
     [ProofStep { consumed, sibling }, ..rest] -> {
       let new_cursor = cursor - consumed
       let direction = bytearray.at(key_ar, new_cursor)
-      expect direction == 0
+      expect direction == expected_dir
       let step_jump = slice_bytearray(new_cursor + 1, consumed - 1, key_ar)
       let my_indirect = Indirect { jump: step_jump, hash: acc }
       let new_acc = add_with_direction(direction, my_indirect, sibling)
-      fold_including_minimum(new_acc, key_ar, new_cursor, rest)
+      fold_including_extremum(expected_dir, new_acc, key_ar, new_cursor, rest)
     }
   }
 }
@@ -272,6 +352,84 @@ fn do_excluding(key_after_root: ByteArray, proof: Proof) -> ByteArray {
             add_with_direction(next_direction, collapsed, next_step.sibling)
           let root_value =
             fold_including(acc, key_after_root, next_cursor, upper_steps)
+          root_hash(proof.root_jump, root_value)
+        }
+      }
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// ------------------------------------------------------- excluding + extremum
+// -----------------------------------------------------------------------------
+
+/// Like `excluding`, but asserts the key is the minimum: every
+/// branch direction must be 0 (left).
+fn excluding_minimum(key: ByteArray, proof: Proof) -> ByteArray {
+  excluding_extremum(0, key, proof)
+}
+
+/// Like `excluding`, but asserts the key is the maximum: every
+/// branch direction must be 1 (right).
+fn excluding_maximum(key: ByteArray, proof: Proof) -> ByteArray {
+  excluding_extremum(1, key, proof)
+}
+
+/// Like `excluding`, but asserts every branch direction equals `expected_dir`.
+fn excluding_extremum(
+  expected_dir: Int,
+  key: ByteArray,
+  proof: Proof,
+) -> ByteArray {
+  let key_bits = key_to_bitpath(key)
+  let rj_len = bytearray.length(proof.root_jump)
+  let key_after_root =
+    slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
+  do_excluding_extremum(expected_dir, key_after_root, proof)
+}
+
+fn do_excluding_extremum(
+  expected_dir: Int,
+  key_after_root: ByteArray,
+  proof: Proof,
+) -> ByteArray {
+  when proof.steps is {
+    [] -> null_hash
+
+    [bottom_step, ..rest_steps] -> {
+      let cursor = bytearray.length(key_after_root)
+      let bottom_cursor = cursor - bottom_step.consumed
+      let direction = bytearray.at(key_after_root, bottom_cursor)
+      expect direction == expected_dir
+      let opposite = 1 - direction
+
+      let collapsed =
+        Indirect {
+          jump: cons_bytearray(opposite, bottom_step.sibling.jump),
+          hash: bottom_step.sibling.hash,
+        }
+
+      when rest_steps is {
+        [] ->
+          root_hash(
+            bytearray.concat(proof.root_jump, collapsed.jump),
+            collapsed.hash,
+          )
+
+        [next_step, ..upper_steps] -> {
+          let next_cursor = bottom_cursor - next_step.consumed
+          let next_direction = bytearray.at(key_after_root, next_cursor)
+          expect next_direction == expected_dir
+          let acc =
+            add_with_direction(next_direction, collapsed, next_step.sibling)
+          let root_value =
+            fold_including_extremum(
+              expected_dir,
+              acc,
+              key_after_root,
+              next_cursor,
+              upper_steps,
+            )
           root_hash(proof.root_jump, root_value)
         }
       }
