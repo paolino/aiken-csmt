@@ -31,4 +31,13 @@ test:
 build:
     aiken build
 
-ci: generate-vectors format-check test
+vectors-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just generate-vectors
+    if ! git diff --exit-code lib/aiken/csmt/vectors.ak lib/aiken/csmt/fifo_vectors.ak 2>/dev/null; then
+        echo "ERROR: committed vectors are stale — run 'just generate-vectors' and commit"
+        exit 1
+    fi
+
+ci: vectors-check format-check test
