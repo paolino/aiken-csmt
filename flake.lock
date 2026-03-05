@@ -275,17 +275,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1772704219,
-        "narHash": "sha256-KyVueyiTSkU3bV5qZsD7BWHfv6BxQzdPiEO1IR57dLw=",
+        "lastModified": 1772712916,
+        "narHash": "sha256-sFs0G8c2/44W8jwhQfKjGW88EOV3RQVMnzsvyXySsYw=",
         "owner": "paolino",
         "repo": "haskell-mts",
-        "rev": "4cd37b80248b218e8f4c2fda8fc6a817e396a407",
+        "rev": "f0e2d220bbdd448a3ae2bbae068455c54e446eb5",
         "type": "github"
       },
       "original": {
         "owner": "paolino",
         "repo": "haskell-mts",
-        "rev": "4cd37b80248b218e8f4c2fda8fc6a817e396a407",
+        "rev": "f0e2d220bbdd448a3ae2bbae068455c54e446eb5",
         "type": "github"
       }
     },
