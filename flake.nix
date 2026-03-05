@@ -4,12 +4,14 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    haskell-mts.url = "github:paolino/haskell-mts";
   };
 
   outputs =
     {
       nixpkgs,
       flake-utils,
+      haskell-mts,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -17,34 +19,16 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        stdlib = pkgs.fetchFromGitHub {
-          owner = "aiken-lang";
-          repo = "stdlib";
-          rev = "v2.2.0";
-          hash = "sha256-BDaM+JdswlPasHsI03rLl4OR7u5HsbAd3/VFaoiDTh4=";
-        };
+        test-vectors = haskell-mts.packages.${system}.csmt-test-vectors;
 
-        fuzz = pkgs.fetchFromGitHub {
-          owner = "aiken-lang";
-          repo = "fuzz";
-          rev = "v2.1.1";
-          hash = "sha256-oMHBJ/rIPov/1vB9u608ofXQighRq7DLar+hGrOYqTw=";
-        };
-
-        packagesToml = pkgs.writeText "packages.toml" ''
-          [[packages]]
-          name = "aiken-lang/stdlib"
-          version = "v2.2.0"
-          source = "github"
-
-          [[packages]]
-          name = "aiken-lang/fuzz"
-          version = "v2.1.1"
-          source = "github"
+        generate-vectors = pkgs.runCommand "csmt-test-vectors.ak" { } ''
+          ${test-vectors}/bin/csmt-test-vectors > $out
         '';
 
       in
       {
+        packages.test-vectors = generate-vectors;
+
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.aiken
