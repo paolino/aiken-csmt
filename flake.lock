@@ -285,6 +285,7 @@
       "original": {
         "owner": "paolino",
         "repo": "haskell-mts",
+        "rev": "4cd37b80248b218e8f4c2fda8fc6a817e396a407",
         "type": "github"
       }
     },
