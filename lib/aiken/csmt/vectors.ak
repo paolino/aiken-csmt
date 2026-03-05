@@ -2,7 +2,7 @@
 // Tests the Aiken CSMT against the reference Haskell.
 
 use aiken/csmt.{
-  Proof, ProofStep, delete, empty, from_root, has, insert, is_empty, root,
+  Proof, ProofStep, delete, empty, from_root, has, insert, is_empty, pop, root,
   update,
 }
 use aiken/csmt/hashing.{Indirect}
@@ -307,4 +307,72 @@ test vec_update_value() {
   let proof = Proof { root_jump: #[0, 1, 0, 0, 0, 0, 1, 0], steps: [] }
   let trie2 = update(trie, #"42", proof, #"0102", #"0304")
   root(trie2) == #"dae7868b410878d51fa9b1b3c7a9153824286445d6590bf0bb2df3f06b658377"
+}
+
+test vec_pop_single() {
+  let trie =
+    from_root(
+      #"4ec799b000855432de3e3292057fec1688f983d084747ec87b14953fdaafda98",
+    )
+  let proof = Proof { root_jump: #[0, 0, 0, 0, 0, 0, 0, 0], steps: [] }
+  let trie2 = pop(trie, #"00", #"aa", proof)
+  is_empty(trie2)
+}
+
+test vec_pop_minimum_of_three() {
+  let trie =
+    from_root(
+      #"c79caacc79c111a2b4ed0f19fe832b7d4673f2b7dd3505bbc6beb82b3be6ba0b",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 7,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0],
+            hash: #"bb30a42c1e62f0afda5f0a4e8a562f7a13a24cea00ee81917b86b89e801314aa",
+          },
+        },
+        ProofStep {
+          consumed: 1,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0, 0],
+            hash: #"e88bd757ad5b9bedf372d8d3f0cf6c962a469db61a265f6418e1ffed86da29ec",
+          },
+        },
+      ],
+    }
+  let trie2 = pop(trie, #"00", #"01", proof)
+  root(trie2) == #"e8b8031832e17478c639e02b18c24661b570e615954ef057a4aa2fa51593f709"
+}
+
+test vec_pop_minimum_of_four() {
+  let trie =
+    from_root(
+      #"1faeb5ccbeebe31365b83f192c005c3f40df7049bf676deaf027a0649937d770",
+    )
+  let proof =
+    Proof {
+      root_jump: #"",
+      steps: [
+        ProofStep {
+          consumed: 7,
+          sibling: Indirect {
+            jump: #[0, 0, 0, 0, 0, 0],
+            hash: #"ae85d245a3d00bfde01f59f3c4fe0b4bfae1cb37e9cf91929eadcea4985711de",
+          },
+        },
+        ProofStep {
+          consumed: 1,
+          sibling: Indirect {
+            jump: #"",
+            hash: #"1e6118b4ea7b1727b61a42bfd6b4ce81b2559c9e271ceeee78d0714c4ebe30dd",
+          },
+        },
+      ],
+    }
+  let trie2 = pop(trie, #"00", #"10", proof)
+  root(trie2) == #"7fafcd20e52c46e4a52eb14e5ae246388365e8cf8bfbe3147f6d066d9efdbd7e"
 }
