@@ -1,5 +1,4 @@
 // Auto-generated FIFO test vectors from haskell-mts
-// Tests the Aiken CSMT FIFO against the reference Haskell.
 
 use aiken/csmt.{Proof, ProofStep, empty, from_root}
 use aiken/csmt/fifo.{Fifo, is_empty, pop, push, root_hash}
