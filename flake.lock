@@ -275,11 +275,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1772712916,
-        "narHash": "sha256-sFs0G8c2/44W8jwhQfKjGW88EOV3RQVMnzsvyXySsYw=",
+        "lastModified": 1772734960,
+        "narHash": "sha256-ZNVxMXZWqY8RraT3MZOlumxB62rlXtL5EOn8NrhG6L4=",
         "owner": "paolino",
         "repo": "haskell-mts",
-        "rev": "f0e2d220bbdd448a3ae2bbae068455c54e446eb5",
+        "rev": "7ebae029398c3fcb6e4a0f0bb7f390dbe93e8cd7",
         "type": "github"
       },
       "original": {
