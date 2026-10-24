@@ -35,7 +35,8 @@ hashes of any length and content, step lists of any length.
 | insert-rejects-held-key | for a tree holding `K`, `insert(T, K, v, P)` fails for every `P` and `v` |
 | push-rejects-held-key | same for `push_min` and `push_max` |
 | has-rejects-wrong-value | for a tree holding `K -> v`, `has(T, K, w, P)` is false or fails for every `P` and every `w != v` |
-| has-rejects-absent-key | for a tree not holding `K` (any key length), `has(T, K, w, P)` is false or fails for every `P`, `w` |
+| has-rejects-absent-key | for a tree whose keys all have length `L` and a key `K` of length `L` it does not hold, `has(T, K, w, P)` is false or fails for every `P`, `w` |
+| has-rejects-other-length-key | for a key whose length differs from `L`, `has(T, K, w, P)` is false or fails for every `P` and every `w` that is not a branch preimage of `T` |
 | removal-rejects-false-membership | `delete`, `update`, `pop`, `pop_max` fail whenever the matching `has` statement is false |
 | honest-proofs-accepted | for random trees built by haskell-mts, every member's inclusion proof makes `has` true, every absent key's proof makes `miss` true, and `insert` with it yields the haskell-mts root after insertion |
 | range-check-kills-relaxation | each range check added by this ticket, if removed or relaxed, makes at least one soundness property fail; this runs in CI |
@@ -43,8 +44,16 @@ hashes of any length and content, step lists of any length.
 | case-count-recorded | CI runs the properties with a fixed `--max-success`, and the PR records the number |
 
 Trees in the properties hold keys of one length (the haskell-mts model). The
-queried key in `has-rejects-absent-key` ranges over every length, including
-prefixes and extensions of held keys.
+queried keys of `has-rejects-other-length-key` include prefixes and extensions
+of held keys.
+
+Leaf and branch hashes are not domain-separated: a value equal to
+`ser(left) ++ ser(right)` hashes like the branch with those children, so a key
+ending at that branch (a prefix of held keys) verifies with that value. No
+proof check can exclude it, because the verifier does not know the tree's key
+length. The library therefore requires every tree to hold keys of one fixed
+length (documented in `lib/aiken/csmt.ak`); a caller that hashes its keys meets
+it. Changing the hash format is out of scope.
 
 Rejection means the function returns false or the script fails; both are
 acceptable on-chain. The proof format (`Proof`, `ProofStep`, `Indirect`) does
