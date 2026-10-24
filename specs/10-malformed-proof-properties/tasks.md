@@ -1,0 +1,23 @@
+# Tasks
+
+## inclusion-soundness
+- [ ] inclusion-soundness-properties (has-rejects-wrong-value, has-rejects-absent-key, removal-rejects-false-membership)
+- [ ] inclusion-range-checks with failing cases kept
+
+## exclusion-soundness
+- [ ] exclusion-soundness-properties (miss-rejects-held-key, insert-rejects-held-key, push-rejects-held-key)
+- [ ] exclusion-range-checks with failing cases kept
+
+## relaxation-check
+- [ ] planted relaxations killed in CI (range-check-kills-relaxation)
+- [ ] fixed case count in CI (case-count-recorded)
+
+## honest-completeness
+- [ ] random-tree vectors from haskell-mts
+- [ ] honest-proofs-accepted properties
+
+## cost-measurement
+- [ ] cost table at 1, 10, 1 000, 100 000 keys, before and after
+
+## release
+- [ ] version bump and tag
