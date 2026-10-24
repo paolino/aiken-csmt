@@ -1,8 +1,8 @@
 # Tasks
 
 ## inclusion-soundness
-- [ ] inclusion-soundness-properties (has-rejects-wrong-value, has-rejects-absent-key, removal-rejects-false-membership)
-- [ ] inclusion-range-checks with failing cases kept
+- [x] inclusion-soundness-properties (has-rejects-wrong-value, has-rejects-absent-key, has-rejects-other-length-key, removal-rejects-false-membership)
+- [x] inclusion-range-checks with failing cases kept
 
 ## exclusion-soundness
 - [ ] exclusion-soundness-properties (miss-rejects-held-key, insert-rejects-held-key, push-rejects-held-key)

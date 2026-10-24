@@ -12,6 +12,16 @@
 //// - Path compression via "jumps" (Indirect type)
 //// - Keys are NOT hashed — ordering is preserved
 //// - Proof format: list of (consumed, sibling) steps from leaf to root
+////
+//// ## Key length
+////
+//// Every tree must hold keys of one fixed length, and `has`, `delete`,
+//// `update`, `pop` and `pop_max` decide membership only for keys of that
+//// length. The node hash does not tell a leaf from a branch, so the root alone
+//// does not fix the depth of a leaf: a key shorter than the tree's keys can
+//// verify with a value that is the serialized pair of an internal node's
+//// children. A caller whose keys are digests of one fixed length satisfies the
+//// obligation; any other caller must check the key length itself.
 
 use aiken/builtin.{blake2b_256, cons_bytearray, slice_bytearray}
 use aiken/csmt/bits.{key_to_bitpath}
@@ -194,13 +204,19 @@ pub type ProofStep {
 // ------------------------------------------------------------------- including
 // -----------------------------------------------------------------------------
 
+/// The bits of the key below the root jump. The root jump is hashed as given,
+/// so it must be exactly the leading bits of the key: any other jump would
+/// let the proof of one key stand for another.
+fn after_root_jump(key_bits: ByteArray, root_jump: ByteArray) -> ByteArray {
+  let rj_len = bytearray.length(root_jump)
+  expect slice_bytearray(0, rj_len, key_bits) == root_jump
+  slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
+}
+
 /// Compute the root hash assuming the key IS present with the given value.
 fn including(key: ByteArray, value: ByteArray, proof: Proof) -> ByteArray {
-  let key_bits = key_to_bitpath(key)
+  let key_after_root = after_root_jump(key_to_bitpath(key), proof.root_jump)
   let leaf_hash = blake2b_256(value)
-  let rj_len = bytearray.length(proof.root_jump)
-  let key_after_root =
-    slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
   let root_value =
     fold_including(
       leaf_hash,
@@ -212,7 +228,8 @@ fn including(key: ByteArray, value: ByteArray, proof: Proof) -> ByteArray {
 }
 
 /// Walk proof steps from leaf to root, combining hashes.
-/// Cursor starts at the end of key_after_root and moves toward 0.
+/// Cursor starts at the end of key_after_root and moves toward 0, where the
+/// steps must end: key bits left over would be unhashed.
 fn fold_including(
   acc: ByteArray,
   key_ar: ByteArray,
@@ -220,8 +237,12 @@ fn fold_including(
   steps: List<ProofStep>,
 ) -> ByteArray {
   when steps is {
-    [] -> acc
+    [] -> {
+      expect cursor == 0
+      acc
+    }
     [ProofStep { consumed, sibling }, ..rest] -> {
+      expect consumed >= 1
       let new_cursor = cursor - consumed
       let direction = bytearray.at(key_ar, new_cursor)
       let step_jump = slice_bytearray(new_cursor + 1, consumed - 1, key_ar)
@@ -263,11 +284,8 @@ fn including_extremum(
   value: ByteArray,
   proof: Proof,
 ) -> ByteArray {
-  let key_bits = key_to_bitpath(key)
+  let key_after_root = after_root_jump(key_to_bitpath(key), proof.root_jump)
   let leaf_hash = blake2b_256(value)
-  let rj_len = bytearray.length(proof.root_jump)
-  let key_after_root =
-    slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
   let root_value =
     fold_including_extremum(
       expected_dir,
@@ -288,8 +306,12 @@ fn fold_including_extremum(
   steps: List<ProofStep>,
 ) -> ByteArray {
   when steps is {
-    [] -> acc
+    [] -> {
+      expect cursor == 0
+      acc
+    }
     [ProofStep { consumed, sibling }, ..rest] -> {
+      expect consumed >= 1
       let new_cursor = cursor - consumed
       let direction = bytearray.at(key_ar, new_cursor)
       expect direction == expected_dir
