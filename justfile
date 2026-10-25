@@ -25,8 +25,16 @@ generate-vectors:
     rm -f /tmp/csmt-vec-*
     aiken fmt
 
+# Property tests run with a fixed seed and case count: a pass is repeatable, and
+# relaxation-check promises that every planted relaxation fails a test at exactly these values.
+seed := "61"
+cases := "200"
+
 test:
-    aiken check
+    aiken check --seed {{seed}} --max-success {{cases}}
+
+relaxation-check:
+    scripts/relaxation-check {{seed}} {{cases}}
 
 build:
     aiken build
@@ -40,4 +48,4 @@ vectors-check:
         exit 1
     fi
 
-ci: vectors-check format-check test
+ci: vectors-check format-check test relaxation-check

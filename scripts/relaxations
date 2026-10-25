@@ -1,0 +1,31 @@
+# Relaxations of the range checks, planted one at a time by scripts/relaxation-check.
+# Each line: name | file | function | text replaced | replacement | times replaced
+# The text is matched inside the named function only. An empty replacement removes it.
+# A line "not planted: name | reason" is printed by the check and not run.
+# A relaxation that does not apply, or that no property test fails on, fails the check.
+
+# The root jump is hashed as given, so it must be the leading bits of the key.
+root jump not compared with the key | lib/aiken/csmt.ak | after_root_jump | expect slice_bytearray(0, rj_len, key_bits) == root_jump | | 1
+root jump compared with the key by length only | lib/aiken/csmt.ak | after_root_jump | expect slice_bytearray(0, rj_len, key_bits) == root_jump | expect rj_len <= bytearray.length(key_bits) | 1
+
+# The steps must end at the start of the key: key bits left over would be unhashed.
+inclusion walk may leave key bits unconsumed | lib/aiken/csmt.ak | fold_including | expect cursor == 0 | | 1
+inclusion walk may leave one key bit unconsumed | lib/aiken/csmt.ak | fold_including | expect cursor == 0 | expect cursor <= 1 | 1
+extremum inclusion walk may leave key bits unconsumed | lib/aiken/csmt.ak | fold_including_extremum | expect cursor == 0 | | 1
+extremum inclusion walk may leave one key bit unconsumed | lib/aiken/csmt.ak | fold_including_extremum | expect cursor == 0 | expect cursor <= 1 | 1
+
+# Every step consumes at least one key bit.
+inclusion step may consume any number of key bits | lib/aiken/csmt.ak | fold_including | expect consumed >= 1 | | 1
+inclusion step may consume no key bits | lib/aiken/csmt.ak | fold_including | expect consumed >= 1 | expect consumed >= 0 | 1
+# The extremum walk repeats this check on its own steps; it is listed, not planted.
+not planted: extremum inclusion step may consume any number of key bits | redundant through the public API: every caller also runs the same steps through fold_including, which refuses them
+not planted: extremum inclusion step may consume no key bits | redundant through the public API: every caller also runs the same steps through fold_including, which refuses them
+exclusion step above the lowest may consume any number of key bits | lib/aiken/csmt.ak | do_excluding | expect next_step.consumed >= 1 | | 1
+exclusion step above the lowest may consume no key bits | lib/aiken/csmt.ak | do_excluding | expect next_step.consumed >= 1 | expect next_step.consumed >= 0 | 1
+
+# The sibling that takes the removed branch's place keeps the key bits above the branch.
+exclusion sibling drops the key bits between the branches | lib/aiken/csmt.ak | collapse | slice_bytearray(above, bottom_cursor - above, key_after_root) | #"" | 1
+
+# Every byte of a jump is a bit; a larger byte would carry into the bits before it.
+jump byte not checked to be 0 or 1 | lib/aiken/csmt/bits.ak | pack_one_byte | expect bit <= 1 | | 1
+jump byte allowed up to 2 | lib/aiken/csmt/bits.ak | pack_one_byte | expect bit <= 1 | expect bit <= 2 | 1

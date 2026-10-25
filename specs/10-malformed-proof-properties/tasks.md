@@ -9,8 +9,8 @@
 - [x] exclusion-range-checks with failing cases kept
 
 ## relaxation-check
-- [ ] planted relaxations killed in CI (range-check-kills-relaxation)
-- [ ] fixed case count in CI (case-count-recorded)
+- [x] planted relaxations killed in CI (range-check-kills-relaxation)
+- [x] fixed case count in CI (case-count-recorded)
 
 ## honest-completeness
 - [ ] random-tree vectors from haskell-mts
