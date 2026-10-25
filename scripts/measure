@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Tool, not a guarantee: nothing in CI runs it and nothing cites its output as a check.
+#
+# Prints, as one markdown table, the size of the proof and the cost `aiken check`
+# reports for lib/aiken/csmt/measure_vectors.ak (has, miss and insert at 1, 10,
+# 1 000 and 100 000 keys) on the verifier of the working tree and on every other
+# revision named. The measure vectors of the working tree are run against each
+# revision's own lib, so each verifier is given the same proofs.
+#
+# proof bytes: length of the proof serialised as Plutus data (what a redeemer
+#   carries), taken from the vector, so it is the same for every revision.
+# mem, cpu: execution units of the test, the call to has, miss or insert included.
+# refused: the verifier rejected an honest proof; the test failed.
+#
+# usage: measure [revision ...]   (revisions of this repository, e.g. a711011)
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$here/.." && pwd)
+module=lib/aiken/csmt/measure_vectors.ak
+[ -f "$root/$module" ] || { echo "no $module: run 'just generate-vectors'" >&2; exit 2; }
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# stage <dir> <lib-dir>: a project in <dir> with the dependencies of the checkout, the
+# lib in <lib-dir> and the measure vectors of the working tree.
+stage() {
+  mkdir -p "$1"
+  cp "$root/aiken.toml" "$root/aiken.lock" "$1/"
+  if [ -d "$root/build" ]; then
+    cp -r "$root/build" "$1/build"
+  fi
+  cp -r "$2" "$1/lib"
+  chmod -R u+w "$1"
+  cp "$root/$module" "$1/$module"
+}
+
+# units <dir> <out>: "title status mem cpu" for each of the twelve tests; a test the
+# verifier refuses has status fail and the units spent up to the refusal. Anything
+# short of twelve results (a compile error, say) is an error.
+units() {
+  (cd "$1" && aiken check -m aiken/csmt/measure_vectors) >"$work/units.json" 2>"$work/units.err" || true
+  awk '
+    /"title":/ { t = $0; sub(/.*"title": *"/, "", t); sub(/".*/, "", t) }
+    /"status":/ { s = ($0 ~ /"pass"/) ? "pass" : "fail" }
+    /"mem":/ { m = $0; gsub(/[^0-9]/, "", m) }
+    /"cpu":/ { c = $0; gsub(/[^0-9]/, "", c); print t, s, m, c }
+  ' "$work/units.json" >"$2"
+  if [ "$(wc -l <"$2")" -ne 12 ]; then
+    cat "$work/units.err" >&2
+    echo "expected 12 measure results in $1, found $(wc -l <"$2")" >&2
+    exit 1
+  fi
+}
+
+# sizes <dir> <out>: "title bytes steps" for each test, from the traces of a copy of the
+# vectors in which each test reports its proof before verifying it.
+sizes() {
+  awk '
+    /^test measure_/ { sub(/^test measure_/, "test size_"); in_test = 1 }
+    { print }
+    /^use aiken\/csmt\/hashing/ { print "use aiken/builtin"; print "use aiken/collection/list" }
+    in_test && /^  let proof =$/ { want = 1 }
+    want && /^    }$/ {
+      print "  trace @\"proof-bytes\": builtin.length_of_bytearray(builtin.serialise_data(proof))"
+      print "  trace @\"proof-steps\": list.length(proof.steps)"
+      want = 0
+    }
+  ' "$root/$module" >"$1/$module"
+  (cd "$1" && aiken check -m aiken/csmt/measure_vectors --trace-level verbose --trace-filter all) \
+    >"$work/sizes.json" 2>"$work/sizes.err" || true
+  awk '
+    /"title":/ { t = $0; sub(/.*"title": *"/, "", t); sub(/".*/, "", t); sub(/^size_/, "measure_", t) }
+    /"proof-bytes: / { b = $0; gsub(/[^0-9]/, "", b) }
+    /"proof-steps: / { s = $0; gsub(/[^0-9]/, "", s); print t, b, s }
+  ' "$work/sizes.json" >"$2"
+  if [ "$(wc -l <"$2")" -ne 12 ]; then
+    cat "$work/sizes.err" >&2
+    echo "expected 12 proof sizes, found $(wc -l <"$2")" >&2
+    exit 1
+  fi
+}
+
+labels=(tree)
+stage "$work/tree" "$root/lib"
+units "$work/tree" "$work/units-0"
+for rev in "$@"; do
+  n=${#labels[@]}
+  mkdir -p "$work/src-$n"
+  git -C "$root" archive "$rev" -- lib | tar -x -C "$work/src-$n"
+  stage "$work/rev-$n" "$work/src-$n/lib"
+  units "$work/rev-$n" "$work/units-$n"
+  labels+=("$(git -C "$root" rev-parse --short "$rev")")
+done
+
+stage "$work/sizecopy" "$root/lib"
+sizes "$work/sizecopy" "$work/sizes"
+
+header="| operation | keys | steps | proof bytes |"
+rule="|---|---:|---:|---:|"
+for l in "${labels[@]}"; do
+  header="$header $l mem | $l cpu |"
+  rule="$rule---:|---:|"
+done
+echo "$header"
+echo "$rule"
+for op in has miss insert; do
+  for n in 1 10 1000 100000; do
+    t=measure_${op}_$n
+    row=$(awk -v t="$t" -v op="$op" -v n="$n" '$1 == t { printf "| %s | %s | %s | %s |", op, n, $3, $2 }' "$work/sizes")
+    for i in "${!labels[@]}"; do
+      row="$row $(awk -v t="$t" '$1 == t { if ($2 == "pass") printf "%s | %s |", $3, $4; else printf "refused | refused |" }' "$work/units-$i")"
+    done
+    echo "$row"
+  done
+done

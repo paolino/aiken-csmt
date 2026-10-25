@@ -13,11 +13,11 @@
 - [x] fixed case count in CI (case-count-recorded)
 
 ## honest-completeness
-- [ ] random-tree vectors from haskell-mts
-- [ ] honest-proofs-accepted properties
+- [x] random-tree vectors from haskell-mts
+- [x] honest-proofs-accepted properties
 
 ## cost-measurement
-- [ ] cost table at 1, 10, 1 000, 100 000 keys, before and after
+- [x] cost table at 1, 10, 1 000, 100 000 keys, before and after
 
 ## release
 - [ ] version bump and tag
