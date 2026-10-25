@@ -11,7 +11,7 @@
 - [x] stop or change the format, from the table
 
 ## packed-format-haskell
-- [ ] haskell-mts proof format v2 and decoders
+- [x] not needed: the decide line was met without a format change (haskell-mts proof format v2 and decoders)
 
 ## packed-format-aiken
-- [ ] aiken-csmt proof format v2, generators over the new domains, relaxations, release pair
+- [x] not needed: the decide line was met without a format change (aiken-csmt proof format v2, release pair)
