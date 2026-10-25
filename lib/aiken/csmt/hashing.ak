@@ -26,6 +26,14 @@ pub fn serialize_key(bitpath: ByteArray) -> ByteArray {
   concat(len_bytes, packed)
 }
 
+/// Serialize a packed bit string of `count` bits in the Haskell putKey format:
+/// 2-byte big-endian bit count + the packed bytes, which must be exactly
+/// `ceil(count / 8)` of them.
+pub fn serialize_packed(packed: ByteArray, count: Int) -> ByteArray {
+  expect bytearray.length(packed) == ( count + 7 ) / 8
+  concat(from_int_big_endian(count, 2), packed)
+}
+
 /// Serialize a ByteArray in the Haskell putSizedByteString format:
 /// 2-byte big-endian byte count + bytes.
 fn serialize_sized_bs(bs: ByteArray) -> ByteArray {

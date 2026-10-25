@@ -1,7 +1,7 @@
 # Tasks
 
 ## packed-primitives
-- [ ] packed bit-path functions with equivalence properties
+- [x] packed bit-path functions with equivalence properties
 
 ## packed-verifier
 - [ ] verifier on packed keys, proof format unchanged, all v0.1.0 tests passing
