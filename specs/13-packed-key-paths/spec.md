@@ -24,7 +24,7 @@ lambdasistemi/haskell-mts#172.
 | name | statement |
 |---|---|
 | roots-unchanged | for every tree, the root is byte-identical before and after (haskell-mts vectors, all four modules) |
-| cost-target | `has`, `miss` and `insert` at 1 000 and 100 000 keys each cost at most 20% of the 14 M memory and 10 G cpu limits (target to be confirmed by measurement after the first slice; stretch: within 3x of guarded MPF) |
+| cost-target | `has`, `miss` and `insert` at 1 000 and 100 000 keys of 32 bytes each cost at most 1.0 M memory units and 0.3 G cpu (about 2.5 times guarded MPF); the measured table is reported either way and decides the next step, not acceptance of a slice |
 | soundness-kept | every soundness property of #10 holds on the new representation and format, with each field's whole domain covered again |
 | new-domains-covered | packed fields add domains — bit count against byte length, non-zero padding bits, byte lengths not equal to ceil(bits/8), counts past the key — each generated, each refused or shown harmless, each with a planted relaxation killed in CI |
 | completeness-kept | every honest haskell-mts proof (random-tree vectors) is accepted |
