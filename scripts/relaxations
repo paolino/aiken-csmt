@@ -5,27 +5,47 @@
 # A relaxation that does not apply, or that no property test fails on, fails the check.
 
 # The root jump is hashed as given, so it must be the leading bits of the key.
-root jump not compared with the key | lib/aiken/csmt.ak | after_root_jump | expect slice_bytearray(0, rj_len, key_bits) == root_jump | | 1
-root jump compared with the key by length only | lib/aiken/csmt.ak | after_root_jump | expect slice_bytearray(0, rj_len, key_bits) == root_jump | expect rj_len <= bytearray.length(key_bits) | 1
+root jump not compared with the key | lib/aiken/csmt.ak | root_jump_of | expect packed_slice(key, 0, count) == packed | | 1
+root jump compared with the key by length only | lib/aiken/csmt.ak | root_jump_of | expect packed_slice(key, 0, count) == packed | expect count <= 8 * bytearray.length(key) | 1
 
-# The steps must end at the start of the key: key bits left over would be unhashed.
-inclusion walk may leave key bits unconsumed | lib/aiken/csmt.ak | fold_including | expect cursor == 0 | | 1
-inclusion walk may leave one key bit unconsumed | lib/aiken/csmt.ak | fold_including | expect cursor == 0 | expect cursor <= 1 | 1
-extremum inclusion walk may leave key bits unconsumed | lib/aiken/csmt.ak | fold_including_extremum | expect cursor == 0 | | 1
-extremum inclusion walk may leave one key bit unconsumed | lib/aiken/csmt.ak | fold_including_extremum | expect cursor == 0 | expect cursor <= 1 | 1
+# The steps must end at the start of the key below the root jump: key bits left over would be unhashed.
+inclusion walk may leave key bits unconsumed | lib/aiken/csmt.ak | fold_including | expect cursor == start | | 1
+inclusion walk may leave one key bit unconsumed | lib/aiken/csmt.ak | fold_including | expect cursor == start | expect cursor <= start + 1 | 1
+extremum inclusion walk may leave key bits unconsumed | lib/aiken/csmt.ak | fold_including_extremum | expect cursor == start | | 1
+extremum inclusion walk may leave one key bit unconsumed | lib/aiken/csmt.ak | fold_including_extremum | expect cursor == start | expect cursor <= start + 1 | 1
+# The lowest step of an exclusion may point into the root jump. No check names that: the cut of the key
+# bits above the removed branch then has a negative count and is refused, and the walk above it ends
+# below the start of the key. An explicit check would never be reached, so none is added or planted.
+not planted: exclusion lowest step may point into the root jump | refused by the cut of its key bits and by the end of the walk, so a check on it could not be killed
 
-# Every step consumes at least one key bit.
-inclusion step may consume any number of key bits | lib/aiken/csmt.ak | fold_including | expect consumed >= 1 | | 1
-inclusion step may consume no key bits | lib/aiken/csmt.ak | fold_including | expect consumed >= 1 | expect consumed >= 0 | 1
-# The extremum walk repeats this check on its own steps; it is listed, not planted.
-not planted: extremum inclusion step may consume any number of key bits | redundant through the public API: every caller also runs the same steps through fold_including, which refuses them
-not planted: extremum inclusion step may consume no key bits | redundant through the public API: every caller also runs the same steps through fold_including, which refuses them
-exclusion step above the lowest may consume any number of key bits | lib/aiken/csmt.ak | do_excluding | expect next_step.consumed >= 1 | | 1
-exclusion step above the lowest may consume no key bits | lib/aiken/csmt.ak | do_excluding | expect next_step.consumed >= 1 | expect next_step.consumed >= 0 | 1
+# Every step consumes at least one key bit. No check names that: a step that consumes none has a jump of -1 bits,
+# which the cut of the key refuses (a negative count) and the two-byte bit count refuses again, so a check on it
+# could not be killed and none is made.
+not planted: inclusion step may consume no key bits | refused by the cut of its jump and by the two-byte bit count, so an explicit check could not be killed
+not planted: extremum inclusion step may consume no key bits | the same refusal, through fold_including_extremum
+not planted: exclusion step above the lowest may consume no key bits | refused by the cut of the key bits above the removed branch (a negative count)
+
+# Insert, delete, update, pop and push walk the proof once for both roots (fold_pair after the two lowest
+# steps), so the end of the walk and the extremum direction are checked there too.
+pair walk may leave key bits unconsumed | lib/aiken/csmt.ak | fold_pair | expect cursor == start | | 1
+pair walk may leave one key bit unconsumed | lib/aiken/csmt.ak | fold_pair | expect cursor == start | expect cursor <= start + 1 | 1
+pair walk may take any direction at an extremum | lib/aiken/csmt.ak | fold_pair | expect goes(expected_dir, direction) | | 1
+lowest step of a pair walk may take any direction at an extremum | lib/aiken/csmt.ak | without_and_with | expect goes(expected_dir, direction) | | 1
+next step of a pair walk may take any direction at an extremum | lib/aiken/csmt.ak | without_and_with | expect goes(expected_dir, next_direction) | | 1
+
+# The constant 32-byte prefix of an empty-jump node is chosen by a test of the hash length; a hash of another
+# length given it would serialize like a different node.
+sibling hash length at least 32 given the 32-byte prefix | lib/aiken/csmt/hashing.ak | serialize_unjumped | bytearray.length(hash) == 32 | bytearray.length(hash) >= 32 | 1
+sibling hash length at most 32 given the 32-byte prefix | lib/aiken/csmt/hashing.ak | serialize_unjumped | bytearray.length(hash) == 32 | bytearray.length(hash) <= 32 | 1
+sibling hash length not tested | lib/aiken/csmt/hashing.ak | serialize_unjumped | bytearray.length(hash) == 32 | True | 1
 
 # The sibling that takes the removed branch's place keeps the key bits above the branch.
-exclusion sibling drops the key bits between the branches | lib/aiken/csmt.ak | collapse | slice_bytearray(above, bottom_cursor - above, key_after_root) | #"" | 1
+exclusion sibling drops the key bits between the branches | lib/aiken/csmt.ak | collapse | let kept = bottom_cursor - above | let kept = 0 | 1
 
 # Every byte of a jump is a bit; a larger byte would carry into the bits before it.
-jump byte not checked to be 0 or 1 | lib/aiken/csmt/bits.ak | pack_one_byte | expect bit <= 1 | | 1
-jump byte allowed up to 2 | lib/aiken/csmt/bits.ak | pack_one_byte | expect bit <= 1 | expect bit <= 2 | 1
+jump byte not checked to be 0 or 1 | lib/aiken/csmt/bits.ak | packed_from_bitpath | expect high_bits == replicate_byte(length, 0) | | 1
+jump byte allowed up to 3 | lib/aiken/csmt/bits.ak | packed_from_bitpath | replicate_byte(length, 254) | replicate_byte(length, 252) | 1
+
+# The counts and widths the packed functions check against each other are the ones the verifier passes them
+# from one cut, so no proof reaches those checks; the refusals of packed_equivalence cover them directly.
+not planted: packed_concat and serialize_packed width and count guards | always true for what the verifier passes them; refused directly by the packed_equivalence tests

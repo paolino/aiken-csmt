@@ -13,6 +13,7 @@ use aiken/csmt/malformed.{
   absorbing, carrying, held_key_statement, held_maximum_statement,
   held_minimum_statement, honest_insertion, honest_maximum_insertion,
   honest_minimum_insertion, non_maximum_insertion, non_minimum_insertion,
+  with_a_sibling_jump_byte_above_one,
 }
 use aiken/csmt/reference.{proof_of, root_of}
 use aiken/fuzz
@@ -281,4 +282,21 @@ test miss_rejects_a_sibling_jump_that_carries_into_the_removed_bit_below_a_branc
 // jump is concatenated with.
 test pack_bits_refuses_a_byte_above_one() fail {
   pack_bits(#[0, 2]) == pack_bits(#[1, 0])
+}
+
+// A byte above 1 in the jump of the lowest sibling is refused where the jump is
+// packed, though the proof would pack as the honest one without the check.
+// The control is the same statement with the honest proof.
+test miss_accepts_the_proof_of_a_held_key() {
+  let entries = [(#"c0", #""), (#"00", #"")]
+  miss(from_root(root_of([(#"00", #"")])), #"c0", proof_of(entries, #"c0"))
+}
+
+test miss_rejects_a_sibling_jump_byte_above_one() fail {
+  let entries = [(#"c0", #""), (#"00", #"")]
+  miss(
+    from_root(root_of([(#"00", #"")])),
+    #"c0",
+    with_a_sibling_jump_byte_above_one(proof_of(entries, #"c0")),
+  )
 }

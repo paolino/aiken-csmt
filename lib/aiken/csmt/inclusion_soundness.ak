@@ -3,15 +3,20 @@
 //// property is a `fail` test: it passes when the verifier refuses every
 //// generated statement.
 
+use aiken/builtin.{blake2b_256}
 use aiken/collection/list
 use aiken/csmt.{
   CSMT, Proof, ProofStep, delete, from_root, has, pop, pop_max, root, update,
 }
+use aiken/csmt/bits.{key_to_bitpath}
+use aiken/csmt/hashing.{Indirect, combine_hash, root_hash}
 use aiken/csmt/malformed.{
   absent_key_statement, false_statement, honest_statement,
-  other_length_key_statement, wrong_value_statement,
+  other_length_key_statement, with_a_root_jump_byte_above_one,
+  with_a_sibling_jump_byte_above_one, wrong_value_statement,
 }
 use aiken/csmt/reference.{branch_preimages, proof_of, root_of}
+use aiken/fuzz
 use aiken/primitive/bytearray
 
 /// The result of an accepted removal, used so that it is evaluated: an unused
@@ -215,4 +220,87 @@ test has_rejects_branch_preimage_with_one_key_bit_unhashed() fail {
     preimage,
     Proof { root_jump: #[0, 0, 0, 0, 0, 0, 0], steps: [] },
   )
+}
+
+// A byte above 1 in a jump is refused where the jump is packed, though the proof
+// would pack as the honest one without the check. The controls are the same
+// statements with the honest proofs.
+test has_accepts_the_proof_of_a_held_key() {
+  let entries = [(#"c0", #""), (#"00", #"")]
+  has(from_root(root_of(entries)), #"c0", #"", proof_of(entries, #"c0"))
+}
+
+test has_rejects_a_sibling_jump_byte_above_one() fail {
+  let entries = [(#"c0", #""), (#"00", #"")]
+  has(
+    from_root(root_of(entries)),
+    #"c0",
+    #"",
+    with_a_sibling_jump_byte_above_one(proof_of(entries, #"c0")),
+  )
+}
+
+test has_accepts_the_proof_of_the_only_key() {
+  let entries = [(#"ab", #"cd")]
+  has(from_root(root_of(entries)), #"ab", #"cd", proof_of(entries, #"ab"))
+}
+
+test has_rejects_a_root_jump_byte_above_one() fail {
+  let entries = [(#"ab", #"cd")]
+  has(
+    from_root(root_of(entries)),
+    #"ab",
+    #"cd",
+    with_a_root_jump_byte_above_one(proof_of(entries, #"ab")),
+  )
+}
+
+// A sibling hash that is not 32 bytes is serialized with its own length, so the
+// bytes of one node never stand for another's: a branch with such a sibling hashes
+// as the byte-per-bit reference hashes it. The tree is a branch at the first bit
+// of a one-byte key, the other child a node with no jump and the given hash.
+fn branch_with_sibling_hash(
+  key: ByteArray,
+  value: ByteArray,
+  hash: ByteArray,
+) -> (CSMT, Proof) {
+  let bits = key_to_bitpath(key)
+  let mine =
+    Indirect { jump: bytearray.drop(bits, 1), hash: blake2b_256(value) }
+  let other = Indirect { jump: #"", hash }
+  let branch =
+    if bytearray.at(bits, 0) == 0 {
+      combine_hash(mine, other)
+    } else {
+      combine_hash(other, mine)
+    }
+  (
+    from_root(root_hash(#"", branch)),
+    Proof { root_jump: #"", steps: [ProofStep { consumed: 8, sibling: other }] },
+  )
+}
+
+test prop_has_accepts_a_sibling_hash_of_any_length(
+  statement via fuzz.tuple3(
+    fuzz.byte(),
+    fuzz.bytearray_between(0, 8),
+    fuzz.bytearray_between(0, 70),
+  ),
+) {
+  let (byte, value, hash) = statement
+  let key = bytearray.push(#"", byte)
+  let (trie, proof) = branch_with_sibling_hash(key, value, hash)
+  has(trie, key, value, proof)
+}
+
+test has_accepts_a_sibling_hash_of_31_bytes() {
+  let hash = bytearray.take(blake2b_256(#""), 31)
+  let (trie, proof) = branch_with_sibling_hash(#"c0", #"", hash)
+  has(trie, #"c0", #"", proof)
+}
+
+test has_accepts_a_sibling_hash_of_33_bytes() {
+  let hash = bytearray.push(blake2b_256(#""), 7)
+  let (trie, proof) = branch_with_sibling_hash(#"c0", #"", hash)
+  has(trie, #"c0", #"", proof)
 }

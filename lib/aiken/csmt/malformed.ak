@@ -1190,6 +1190,45 @@ pub fn carrying(proof: Proof, by: Int) -> Proof {
   }
 }
 
+/// The proof with 2 added to the first byte of the jump of its lowest sibling.
+/// The byte is no bit, but its extra bit falls out of the packed jump, so the
+/// proof packs as the honest one unless bytes are checked.
+pub fn with_a_sibling_jump_byte_above_one(proof: Proof) -> Proof {
+  when proof.steps is {
+    [] -> proof
+    [bottom, ..rest] ->
+      Proof {
+        ..proof,
+        steps: [
+          ProofStep {
+            ..bottom,
+            sibling: Indirect {
+              ..bottom.sibling,
+              jump: raised_first_byte(bottom.sibling.jump),
+            },
+          },
+          ..rest
+        ],
+      }
+  }
+}
+
+/// The proof with 2 added to the first byte of its root jump.
+pub fn with_a_root_jump_byte_above_one(proof: Proof) -> Proof {
+  Proof { ..proof, root_jump: raised_first_byte(proof.root_jump) }
+}
+
+fn raised_first_byte(jump: ByteArray) -> ByteArray {
+  if bytearray.length(jump) == 0 {
+    jump
+  } else {
+    bytearray.concat(
+      bytearray.push(#"", bytearray.at(jump, 0) + 2),
+      bytearray.drop(jump, 1),
+    )
+  }
+}
+
 /// The honest proof of the held key, of another held key, of the held key in the
 /// tree with a neighbour of it added (a deeper path), or in the tree with
 /// another key removed (a shallower one).
