@@ -1,8 +1,9 @@
 //// Bit manipulation utilities for the CSMT library.
 ////
-//// BitPaths use a byte-per-bit representation: each byte is 0 or 1.
-//// This makes tree operations trivial (index, slice, prepend, concat)
-//// at the cost of 8x space. We only pack to the wire format for hashing.
+//// BitPaths use a byte-per-bit representation: each byte is 0 or 1. A proof
+//// carries its jumps that way, and the verifier packs each one once. It never
+//// expands a key: `key_to_bitpath` and `pack_bits` are the reference the packed
+//// functions are tested against, and what the tests build trees with.
 ////
 //// The `packed_*` functions work on packed bits instead: a key kept as bytes,
 //// bits in order, the most significant bit of the first byte first. They
@@ -195,41 +196,68 @@ pub fn packed_concat(
   )
 }
 
-/// A byte-per-bit string packed, like `pack_bits` but eight bits per step:
+/// A byte-per-bit string packed, like `pack_bits` but 64 bits per step:
 /// `ceil(length / 8)` bytes, the first bit leading, the padding bits zero. Fails
 /// for a byte above 1.
 ///
-/// Eight bit-bytes read as a number are `b0 * 2^56 + b1 * 2^48 + .. + b7`.
-/// Times `gather` (the sum of `2^(7 * k)` for k from 1 to 8) each `b(i)` also
-/// lands at bit `63 - i`, and no two terms share a bit, so bits 56 to 63 of the
-/// product are `b0 .. b7`: the packed byte.
+/// The string is padded with zero bytes to a multiple of 64. Three rounds of
+/// shifts and ors, over the whole string, put at every byte the eight bits that
+/// start there: a byte `b(i)` becomes `2 * b(i) + b(i + 1)`, that
+/// `4 * .. + ..(i + 2)`, that `16 * .. + ..(i + 4)`. Only every eighth byte is
+/// a packed byte. The eight of a block of 64, kept by a mask and read as a number,
+/// are `p0 * 2^504 + p1 * 2^440 + .. + p7 * 2^56`; times `chunk_gather` (the sum of
+/// `2^(56 * k)` for k from 0 to 7) each `p(m)` also lands at bit `504 - 8 * m`, no
+/// two terms share a byte, so bits 448 to 511 of the product are `p0 .. p7`.
 pub fn packed_from_bitpath(bitpath: ByteArray) -> ByteArray {
   let length = bytearray.length(bitpath)
-  expect
-    and_bytearray(False, bitpath, replicate_byte(length, 254)) == replicate_byte(
-      length,
-      0,
-    )
+  let high_bits = and_bytearray(False, bitpath, replicate_byte(length, 254))
+  expect high_bits == replicate_byte(length, 0)
   let padded =
-    bytearray.concat(bitpath, replicate_byte(( 8 - length % 8 ) % 8, 0))
-  pack_words(padded, bytearray.length(padded) - 8, #"")
+    bytearray.concat(bitpath, replicate_byte(( 64 - length % 64 ) % 64, 0))
+  let pairs =
+    or_bytearray(False, shift_bytearray(padded, 1), shift_bytearray(padded, 8))
+  let quads =
+    or_bytearray(False, shift_bytearray(pairs, 2), shift_bytearray(pairs, 16))
+  let windows =
+    or_bytearray(False, shift_bytearray(quads, 4), shift_bytearray(quads, 32))
+  slice_bytearray(
+    0,
+    ( length + 7 ) / 8,
+    pack_blocks(windows, 0, bytearray.length(padded), #""),
+  )
 }
 
-const gather: Int = 0x102040810204080
+const chunk_mask: ByteArray =
+  #"ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000"
 
-const word_top: Int = 0x100000000000000
+const chunk_gather: Int =
+  0x100000000000001000000000000010000000000000100000000000001000000000000010000000000000100000000000001
 
-/// The packed bytes of the eight-byte words of `padded` from `at` down to the
-/// first, in front of `packed`.
-fn pack_words(padded: ByteArray, at: Int, packed: ByteArray) -> ByteArray {
-  if at < 0 {
+const chunk_top: Int =
+  0x10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+const word_modulus: Int = 0x10000000000000000
+
+/// The packed bytes of the blocks of 64 bytes of `windows` from `at`, after
+/// `packed`.
+fn pack_blocks(
+  windows: ByteArray,
+  at: Int,
+  total: Int,
+  packed: ByteArray,
+) -> ByteArray {
+  if at >= total {
     packed
   } else {
-    let word = bytearray.to_int_big_endian(slice_bytearray(at, 8, padded))
-    pack_words(
-      padded,
-      at - 8,
-      cons_bytearray(word * gather / word_top % 256, packed),
+    let firsts =
+      and_bytearray(False, slice_bytearray(at, 64, windows), chunk_mask)
+    let word =
+      bytearray.to_int_big_endian(firsts) * chunk_gather / chunk_top % word_modulus
+    pack_blocks(
+      windows,
+      at + 64,
+      total,
+      bytearray.concat(packed, bytearray.from_int_big_endian(word, 8)),
     )
   }
 }

@@ -9,13 +9,17 @@
 //// value. A packed output has exactly ceil(bits / 8) bytes and zero padding
 //// bits, and is checked for that apart from its equality with the reference.
 
-use aiken/builtin.{cons_bytearray, replicate_byte, slice_bytearray}
+use aiken/builtin.{blake2b_256, cons_bytearray, replicate_byte, slice_bytearray}
 use aiken/collection/list
 use aiken/csmt/bits.{
   key_to_bitpath, pack_bits, packed_bit, packed_concat, packed_from_bitpath,
   packed_single, packed_slice,
 }
-use aiken/csmt/hashing.{serialize_key, serialize_packed}
+use aiken/csmt/hashing.{
+  Indirect, branch_hash, combine_hash, serialize_cut_head, serialize_indirect,
+  serialize_key, serialize_packed, serialize_packed_indirect, serialize_sibling,
+  serialize_unjumped, unjumped_head,
+}
 use aiken/fuzz
 use aiken/math
 use aiken/primitive/bytearray
@@ -464,4 +468,149 @@ test packed_from_bitpath_examples() {
   ) == #"a0" && packed_from_bitpath(#"") == #"" && packed_from_bitpath(
     #[1, 1, 1, 1, 1, 1, 1, 1, 1],
   ) == #"ff80"
+}
+
+// -----------------------------------------------------------------------------
+// ------------------------------------------------ Serializing for the verifier
+// -----------------------------------------------------------------------------
+// The verifier hashes the serialization of a node whose jump is cut from the
+// packed key, or packed from a proof's jump, without a byte-per-bit string in
+// between. Each serialization is checked against `serialize_indirect` of the
+// byte-per-bit node, for hashes of every length a proof may carry.
+
+/// A hash of 0 to 40 bytes: the verifier's own are 32, a proof's may be any.
+fn hashes() -> Fuzzer<ByteArray> {
+  fuzz.either(fuzz.bytearray_fixed(32), fuzz.bytearray_between(0, 40))
+}
+
+fn indirects() -> Fuzzer<Indirect> {
+  fuzz.map2(jumps(70), hashes(), fn(jump, hash) { Indirect { jump, hash } })
+}
+
+test prop_serialized_cut_head_before_a_digest_equals_serialized_byte_per_bit_indirect(
+  statement via fuzz.both(cuts(), fuzz.bytearray_fixed(32)),
+) {
+  let (Cut { key, offset, count }, digest) = statement
+  bytearray.concat(serialize_cut_head(key, offset, count), digest) == serialize_indirect(
+    Indirect { jump: reference_slice(key, offset, count), hash: digest },
+  )
+}
+
+test prop_unjumped_head_before_a_digest_equals_serialized_byte_per_bit_indirect(
+  digest via fuzz.bytearray_fixed(32),
+) {
+  bytearray.concat(unjumped_head, digest) == serialize_indirect(
+    Indirect { jump: #"", hash: digest },
+  )
+}
+
+test prop_serialized_packed_indirect_equals_serialized_byte_per_bit_indirect(
+  statement via fuzz.both(jumps(300), hashes()),
+) {
+  let (jump, hash) = statement
+  serialize_packed_indirect(
+    packed_from_bitpath(jump),
+    bytearray.length(jump),
+    hash,
+  ) == serialize_indirect(Indirect { jump, hash })
+}
+
+test prop_serialized_unjumped_equals_serialized_byte_per_bit_indirect(
+  hash via hashes(),
+) {
+  serialize_unjumped(hash) == serialize_indirect(Indirect { jump: #"", hash })
+}
+
+test prop_serialized_sibling_equals_serialized_byte_per_bit_indirect(
+  statement via fuzz.both(jumps(300), hashes()),
+) {
+  let (jump, hash) = statement
+  serialize_sibling(jump, hash) == serialize_indirect(Indirect { jump, hash })
+}
+
+test prop_branch_hash_equals_combined_byte_per_bit_nodes(
+  statement via fuzz.tuple3(fuzz.int_between(0, 1), indirects(), indirects()),
+) {
+  let (direction, mine, other) = statement
+  branch_hash(direction, serialize_indirect(mine), serialize_indirect(other)) == if direction == 0 {
+    combine_hash(mine, other)
+  } else {
+    combine_hash(other, mine)
+  }
+}
+
+test prop_serialize_cut_head_refuses_a_range_past_the_key(
+  cut via fuzz.both(cuts(), overshoot()),
+) fail {
+  let (Cut { key, offset, .. }, past) = cut
+  let total = 8 * bytearray.length(key)
+  bytearray.length(serialize_cut_head(key, offset, total - offset + past)) >= 0
+}
+
+test serialize_packed_indirect_refuses_a_count_that_does_not_fit_its_bytes() fail {
+  bytearray.length(serialize_packed_indirect(#"a5", 9, #"")) >= 0
+}
+
+test prop_serialize_sibling_refuses_a_jump_byte_above_one(
+  jump via jumps_with_a_byte_above_one(),
+) fail {
+  bytearray.length(serialize_sibling(jump, #"")) >= 0
+}
+
+test serialized_examples() {
+  serialize_cut_head(#"a5", 3, 4) == #"0004200020" && serialize_packed_indirect(
+    #"a0",
+    3,
+    #"",
+  ) == #"0003a00000" && serialize_sibling(#[1], #"bb") == #"0001800001bb" && serialize_sibling(
+    #"",
+    #"bb",
+  ) == #"00000001bb" && branch_hash(0, #"aa", #"0001800001bb") == blake2b_256(
+    #"aa0001800001bb",
+  ) && branch_hash(1, #"aa", #"0001800001bb") == blake2b_256(#"0001800001bbaa")
+}
+
+// A bit path is packed in blocks of 64 bits after three rounds of shifts over
+// the whole string: the edges are at 63, 64 and 65 bits and at multiples of 64.
+fn single_one(length: Int, at: Int) -> ByteArray {
+  bytearray.concat(
+    bytearray.concat(replicate_byte(at, 0), #[1]),
+    replicate_byte(length - at - 1, 0),
+  )
+}
+
+fn every_single_one_packs_as_pack_bits(length: Int) -> Bool {
+  list.all(
+    list.range(0, length - 1),
+    fn(at) {
+      let bits = single_one(length, at)
+      packed_from_bitpath(bits) == pack_bits(bits)
+    },
+  )
+}
+
+test every_single_one_of_63_bits_packs_as_pack_bits() {
+  every_single_one_packs_as_pack_bits(63)
+}
+
+test every_single_one_of_64_bits_packs_as_pack_bits() {
+  every_single_one_packs_as_pack_bits(64)
+}
+
+test every_single_one_of_65_bits_packs_as_pack_bits() {
+  every_single_one_packs_as_pack_bits(65)
+}
+
+test every_single_one_of_129_bits_packs_as_pack_bits() {
+  every_single_one_packs_as_pack_bits(129)
+}
+
+test all_ones_pack_as_pack_bits_at_every_edge_length() {
+  list.all(
+    [1, 7, 8, 9, 63, 64, 65, 127, 128, 129, 192, 255, 256, 257],
+    fn(length) {
+      let bits = replicate_byte(length, 1)
+      packed_from_bitpath(bits) == pack_bits(bits)
+    },
+  )
 }

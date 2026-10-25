@@ -4,11 +4,11 @@
 - [x] packed bit-path functions with equivalence properties
 
 ## packed-verifier
-- [ ] verifier on packed keys, proof format unchanged, all v0.1.0 tests passing
-- [ ] cost table after the internal change
+- [x] verifier on packed keys, proof format unchanged, all v0.1.0 tests passing
+- [x] cost table after the internal change
 
 ## decide
-- [ ] stop or change the format, from the table
+- [x] stop or change the format, from the table
 
 ## packed-format-haskell
 - [ ] haskell-mts proof format v2 and decoders
