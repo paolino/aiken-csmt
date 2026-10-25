@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    haskell-mts.url = "github:paolino/haskell-mts/f0e2d220bbdd448a3ae2bbae068455c54e446eb5";
+    haskell-mts.url = "github:paolino/haskell-mts/b7d56316cdf0512c6d34b55af3cb76f9728142fb";
   };
 
   outputs =

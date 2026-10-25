@@ -84,11 +84,14 @@ fn do_pack(bp: ByteArray, pos: Int, total: Int, acc: ByteArray) -> ByteArray {
   }
 }
 
+/// Every byte of a bit path is a bit. A larger byte would carry into the bits
+/// before it, and the path would pack as one with other bits.
 fn pack_one_byte(bp: ByteArray, start: Int, n: Int, i: Int, acc: Int) -> Int {
   if i >= n {
     acc * pow2(8 - n)
   } else {
     let bit = bytearray.at(bp, start + i)
+    expect bit <= 1
     pack_one_byte(bp, start, n, i + 1, acc * 2 + bit)
   }
 }

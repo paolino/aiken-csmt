@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Run by `just ci`. Plants each relaxation of a range check, listed in the table,
+# in a temporary copy of the library and requires the soundness property modules
+# to fail on it. Exits 0 only when the unmodified copy passes and every
+# relaxation was applied and made at least one test fail. The checkout is only
+# read: all work happens in a temporary directory.
+#
+# usage: relaxation-check <seed> <max-success> [table]
+set -euo pipefail
+
+if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+  echo "usage: relaxation-check <seed> <max-success> [table]" >&2
+  exit 2
+fi
+seed=$1
+cases=$2
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$here/.." && pwd)
+table=${3:-$here/relaxations}
+
+case $seed$cases in
+  '' | *[!0-9]*)
+    echo "seed and max-success must be whole numbers" >&2
+    exit 2
+    ;;
+esac
+[ -f "$table" ] || { echo "no relaxation table at $table" >&2; exit 2; }
+
+modules=()
+for f in "$root"/lib/aiken/csmt/*_soundness.ak; do
+  [ -e "$f" ] || continue
+  m=${f#"$root"/lib/}
+  modules+=("${m%.ak}")
+done
+if [ ${#modules[@]} -eq 0 ]; then
+  echo "no *_soundness property module found under lib/aiken/csmt" >&2
+  exit 2
+fi
+match=()
+for m in "${modules[@]}"; do
+  match+=(-m "$m")
+done
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/pristine"
+cp -r "$root/aiken.toml" "$root/aiken.lock" "$root/lib" "$work/pristine/"
+if [ -d "$root/build" ]; then
+  cp -r "$root/build" "$work/pristine/build"
+fi
+chmod -R u+w "$work/pristine"
+
+status=0
+
+# run_properties <dir> <name>: aiken check on the property modules in <dir>;
+# stdout (the JSON report) and stderr are kept as $work/<name>.json and .err,
+# the exit status is left in $status.
+run_properties() {
+  set +e
+  (cd "$1" && aiken check "${match[@]}" --seed "$seed" --max-success "$cases") \
+    >"$work/$2.json" 2>"$work/$2.err"
+  status=$?
+  set -e
+}
+
+failing_tests() {
+  awk '
+    /"title":/ { t = $0; sub(/.*"title": *"/, "", t); sub(/".*/, "", t) }
+    /"status": *"fail"/ { print t }
+  ' "$work/$1.json"
+}
+
+total_tests() {
+  sed -n 's/^ *"total": *\([0-9][0-9]*\).*/\1/p' "$work/$1.json" | head -n 1
+}
+
+trim() {
+  local s=$1
+  s=${s#"${s%%[![:space:]]*}"}
+  printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
+# apply_edit <dir> <file> <function> <old> <new> <times>: replace <old> by <new>
+# on the lines of <function> in <dir>/<file>; succeeds only when the text was
+# replaced exactly <times> times and the file changed.
+apply_edit() {
+  local target=$1/$2 count
+  [ -f "$target" ] || { echo "no such file $2"; return 1; }
+  OLD=$4 NEW=$5 awk -v fn="$3" -v counts="$work/count" '
+    $0 ~ "^(pub )?fn " fn "\\(" { inside = 1 }
+    inside && (i = index($0, ENVIRON["OLD"])) {
+      $0 = substr($0, 1, i - 1) ENVIRON["NEW"] substr($0, i + length(ENVIRON["OLD"]))
+      n++
+    }
+    { print }
+    /^}/ { inside = 0 }
+    END { print n + 0 > counts }
+  ' "$target" >"$work/edited"
+  count=$(cat "$work/count")
+  if [ "$count" != "$6" ]; then
+    echo "replaced the text $count times in $3, expected $6"
+    return 1
+  fi
+  if cmp -s "$target" "$work/edited"; then
+    echo "the edit left $2 unchanged"
+    return 1
+  fi
+  cp "$work/edited" "$target"
+}
+
+echo "relaxation-check: $(aiken --version), seed $seed, $cases cases, modules: ${modules[*]}"
+
+run_properties "$work/pristine" control
+if [ "$status" -ne 0 ] || [ -z "$(total_tests control)" ]; then
+  echo "CONTROL FAILED: the unmodified library does not pass the property modules (exit $status)"
+  failing_tests control | sed 's/^/  failing: /'
+  tail -n 20 "$work/control.err" | sed 's/^/  | /'
+  exit 1
+fi
+echo "control: the unmodified library passes $(total_tests control) tests"
+
+planted=0
+killed=0
+while IFS='|' read -r name file fn old new times; do
+  name=$(trim "$name")
+  case $name in
+    '' | '#'*) continue ;;
+    'not planted:'*)
+      echo "not planted  $(trim "${name#not planted:}"): $(trim "$file")"
+      continue
+      ;;
+  esac
+  file=$(trim "$file")
+  fn=$(trim "$fn")
+  old=$(trim "$old")
+  new=$(trim "$new")
+  times=$(trim "$times")
+  planted=$((planted + 1))
+
+  rm -rf "$work/run"
+  cp -r "$work/pristine" "$work/run"
+  if ! why=$(apply_edit "$work/run" "$file" "$fn" "$old" "$new" "$times"); then
+    echo "DID NOT APPLY  $name: $why"
+    continue
+  fi
+
+  run_properties "$work/run" run
+  if [ "$status" -eq 0 ]; then
+    echo "NOT KILLED  $name: every test still passes"
+  elif ! grep -q '"summary"' "$work/run.json"; then
+    echo "DID NOT COMPILE  $name: aiken exited $status before running a test; the edit replaced '$old' by '$new' in $fn"
+    cat "$work/run.json" "$work/run.err" | tail -n 10 | sed 's/^/  | /'
+  else
+    mapfile -t failing < <(failing_tests run)
+    if [ ${#failing[@]} -eq 0 ]; then
+      echo "DID NOT RUN  $name: exit $status with no failing test"
+    else
+      echo "killed  $name: ${failing[0]} (${#failing[@]} failing)"
+      killed=$((killed + 1))
+    fi
+  fi
+done <"$table"
+
+echo "relaxation-check: $killed of $planted relaxations killed"
+if [ "$planted" -eq 0 ] || [ "$killed" -ne "$planted" ]; then
+  exit 1
+fi
