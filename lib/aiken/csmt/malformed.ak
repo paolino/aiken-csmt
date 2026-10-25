@@ -11,7 +11,8 @@ use aiken/csmt.{CSMT, Proof, ProofStep, from_root}
 use aiken/csmt/bits.{key_to_bitpath, pack_bits}
 use aiken/csmt/hashing.{Indirect}
 use aiken/csmt/reference.{
-  Entries, branch_preimages, node_indirects, proof_of, root_of, vector_trees,
+  Entries, branch_preimages, node_indirects, path_branches, proof_of,
+  root_indirect, root_of, vector_trees,
 }
 use aiken/fuzz
 use aiken/math
@@ -1000,4 +1001,604 @@ fn truncated_absent_statement() -> Fuzzer<Statement> {
       8 * key_width(entries),
     )
   statement(entries, key, preimage_or(entries, 0, anchor_value), proof)
+}
+
+// -----------------------------------------------------------------------------
+// --------------------------------------------------------------- Held-key proofs
+// -----------------------------------------------------------------------------
+/// A held key offered to `miss`, `insert`, `push_min` and `push_max`, which claim
+/// it absent, with a proof built to make that claim verify. Half the keys are
+/// the smallest or the largest key, so that the minimum and maximum variants,
+/// whose directions must be all 0 or all 1, see proofs they would otherwise
+/// refuse before the check under test.
+pub fn held_key_statement() -> Fuzzer<Statement> {
+  let entries <- fuzz.and_then(fuzz.either(tree(), close_tree()))
+  let parts <-
+    fuzz.and_then(
+      fuzz.tuple3(fuzz.pick(entries), fuzz.int_between(0, 3), value()),
+    )
+  let (picked, extreme, claimed) = parts
+  let (_, (any, _)) = picked
+  let keys = held_keys(entries)
+  let key =
+    when extreme is {
+      0 -> extremum(keys, Less)
+      1 -> extremum(keys, Greater)
+      _ -> any
+    }
+  held_statement(entries, key, claimed)
+}
+
+/// The smallest key of a tree, offered as absent.
+pub fn held_minimum_statement() -> Fuzzer<Statement> {
+  extreme_statement(Less)
+}
+
+/// The largest key of a tree, offered as absent.
+pub fn held_maximum_statement() -> Fuzzer<Statement> {
+  extreme_statement(Greater)
+}
+
+fn extreme_statement(side: Ordering) -> Fuzzer<Statement> {
+  let entries <- fuzz.and_then(fuzz.either(tree(), extreme_tree(side)))
+  let claimed <- fuzz.and_then(value())
+  held_statement(entries, extremum(held_keys(entries), side), claimed)
+}
+
+/// A tree whose smallest (or largest) key is a random key of the tree, and whose
+/// other keys all leave it at a bit where it holds 0 (or 1): that key then goes
+/// the same way at every branch of its path, with random bits between them.
+fn extreme_tree(side: Ordering) -> Fuzzer<Entries> {
+  let width <- fuzz.and_then(fuzz.int_between(1, 3))
+  let key <- fuzz.and_then(fuzz.bytearray_fixed(width))
+  let branches <- fuzz.and_then(fuzz.list_between(branch_point(width), 1, 3))
+  let values <- fuzz.map(fuzz.list_between(value(), 4, 4))
+  let direction =
+    if side == Less {
+      0
+    } else {
+      1
+    }
+  let key_bits = key_to_bitpath(key)
+  let positions =
+    list.filter(
+      list.range(0, bytearray.length(key_bits) - 1),
+      fn(at) { bytearray.at(key_bits, at) == direction },
+    )
+  let others =
+    when positions is {
+      [] -> []
+      _ ->
+        list.map(
+          branches,
+          fn(branch) {
+            let (at, noise) = branch
+            expect Some(position) =
+              list.at(positions, at % list.length(positions))
+            branch_off(key, position, noise)
+          },
+        )
+    }
+  list.zip(list.unique([key, ..others]), values)
+}
+
+fn held_statement(
+  entries: Entries,
+  key: ByteArray,
+  claimed: ByteArray,
+) -> Fuzzer<Statement> {
+  fuzz.map(
+    held_key_proof(entries, key),
+    fn(proof) { statement(entries, key, claimed, proof) },
+  )
+}
+
+/// A damaged honest proof, a proof that absorbs a node (one and a half in four),
+/// one that absorbs a node and is then damaged, or one whose lowest sibling
+/// carries into the bit the verifier prepends.
+fn held_key_proof(entries: Entries, key: ByteArray) -> Fuzzer<Proof> {
+  fuzz.either4(
+    {
+      let honest <- fuzz.and_then(neighbour_base(entries, key))
+      damage(honest, key, entries)
+    },
+    absorbing_proof(entries, key),
+    fuzz.either(
+      absorbing_proof(entries, key),
+      {
+        let forged <- fuzz.and_then(absorbing_proof(entries, key))
+        damage(forged, key, entries)
+      },
+    ),
+    carrying_proof(entries, key),
+  )
+}
+
+/// The jump bytes of the lowest sibling are not bits: the byte `2^by + bit` at
+/// index `by - 1` adds `2^by` to the packed value, which flips the bit `by`
+/// places before it. The node it stands for is the one at `level` of the path,
+/// or the top node, and the removed branch reads a position that holds 1, so
+/// that the bit the verifier prepends is 0 where the node has 1 and the carry
+/// puts it right.
+fn carrying_proof(entries: Entries, key: ByteArray) -> Fuzzer<Proof> {
+  fuzz.map(
+    fuzz.tuple4(
+      fuzz.int_between(0, 15),
+      fuzz.int_between(0, 63),
+      fuzz.either(fuzz.constant(1), fuzz.int_between(1, 7)),
+      fuzz.int_between(0, 8),
+    ),
+    fn(params) {
+      let (which, draw, by, cut) = params
+      let top = root_indirect(entries)
+      let path = path_branches(entries, key)
+      let key_bits = key_to_bitpath(key)
+      let level = which % ( list.length(path) + 1 ) - 1
+      if level < 0 {
+        let kept = cut % ( bytearray.length(top.jump) + 1 )
+        let read = reading_after(bytearray.drop(key_bits, kept), 1, 0, draw)
+        carrying(absorbing(entries, key, level, kept, read, read + 1, 0), by)
+      } else {
+        let position = branch_position(path, level)
+        let read =
+          reading_after(
+            bytearray.drop(key_bits, bytearray.length(top.jump)),
+            1,
+            position + 1,
+            draw,
+          )
+        carrying(
+          absorbing(entries, key, level, 0, read, read - position, 0),
+          by,
+        )
+      }
+    },
+  )
+}
+
+/// The proof with `2^by` added to the byte at index `by - 1` of the jump of its
+/// lowest sibling.
+pub fn carrying(proof: Proof, by: Int) -> Proof {
+  when proof.steps is {
+    [] -> proof
+    [bottom, ..rest] -> {
+      let jump = bottom.sibling.jump
+      let at = by - 1
+      let carried =
+        if at < bytearray.length(jump) {
+          bytearray.concat(
+            bytearray.concat(
+              bytearray.take(jump, at),
+              bytearray.push(#"", bytearray.at(jump, at) + math.pow(2, by)),
+            ),
+            bytearray.drop(jump, at + 1),
+          )
+        } else {
+          jump
+        }
+      Proof {
+        ..proof,
+        steps: [
+          ProofStep {
+            ..bottom,
+            sibling: Indirect { ..bottom.sibling, jump: carried },
+          },
+          ..rest
+        ],
+      }
+    }
+  }
+}
+
+/// The honest proof of the held key, of another held key, of the held key in the
+/// tree with a neighbour of it added (a deeper path), or in the tree with
+/// another key removed (a shallower one).
+fn neighbour_base(entries: Entries, key: ByteArray) -> Fuzzer<Proof> {
+  fuzz.map(
+    fuzz.tuple4(
+      fuzz.pick(entries),
+      fuzz.int_between(0, 3),
+      fuzz.int_between(0, 63),
+      fuzz.bytearray_fixed(key_width(entries)),
+    ),
+    fn(parts) {
+      let (picked, how, at, noise) = parts
+      let (_, (other, _)) = picked
+      when how is {
+        0 -> proof_of(entries, key)
+        1 -> proof_of(entries, other)
+        2 ->
+          proof_of(
+            put(
+              entries,
+              branch_off(key, at % ( 8 * key_width(entries) ), noise),
+              #"",
+            ),
+            key,
+          )
+        _ ->
+          proof_of(
+            list.filter(
+              entries,
+              fn(entry) { entry.1st != other || other == key },
+            ),
+            key,
+          )
+      }
+    },
+  )
+}
+
+/// Proofs that absorb a node of the tree on the held key's path (see
+/// `absorbing`): half of them restore the node exactly, the others also vary how
+/// many bits are dropped, how many key bits the steps consume, and the root jump.
+fn absorbing_proof(entries: Entries, key: ByteArray) -> Fuzzer<Proof> {
+  fuzz.either(
+    exact_absorbing_proof(entries, key),
+    loose_absorbing_proof(entries, key),
+  )
+}
+
+/// The removed branch reads a position that holds the opposite of the node's
+/// first bit, so that the bit the verifier prepends restores the node.
+fn exact_absorbing_proof(entries: Entries, key: ByteArray) -> Fuzzer<Proof> {
+  fuzz.map2(
+    fuzz.int_between(0, 15),
+    fuzz.int_between(0, 63),
+    fn(which, draw) {
+      let level = which % ( list.length(path_branches(entries, key)) + 1 ) - 1
+      absorbing(
+        entries,
+        key,
+        level,
+        0,
+        read_position(entries, key, level, 0, draw, True),
+        1,
+        0,
+      )
+    },
+  )
+}
+
+/// Which node, how many bits it drops, and how many key bits the two lowest
+/// steps consume are drawn from small ranges around the values an honest proof
+/// has, zero and negative consumed included. Half the time the position is
+/// chosen as in the exact proofs.
+fn loose_absorbing_proof(entries: Entries, key: ByteArray) -> Fuzzer<Proof> {
+  fuzz.map(
+    fuzz.tuple7(
+      fuzz.int_between(0, 15),
+      fuzz.either(fuzz.int_between(-3, 3), fuzz.int_between(-8, 12)),
+      fuzz.int_between(0, 7),
+      fuzz.int_between(0, 7),
+      fuzz.int_between(0, 8),
+      fuzz.int_between(0, 9),
+      fuzz.bool(),
+    ),
+    fn(params) {
+      let (which, middle, dropped, off_by, cut, cursor, aware) = params
+      let top = root_indirect(entries)
+      let path = path_branches(entries, key)
+      let level = which % ( list.length(path) + 1 ) - 1
+      let kept =
+        if level < 0 {
+          cut % ( bytearray.length(top.jump) + 1 )
+        } else {
+          0
+        }
+      let base =
+        if level < 0 {
+          cursor
+        } else {
+          branch_position(path, level) + middle
+        }
+      let drop_count =
+        if dropped == 0 {
+          0
+        } else if dropped == 7 {
+          2
+        } else {
+          1
+        }
+      let shift =
+        if off_by == 6 {
+          1
+        } else if off_by == 7 {
+          -1
+        } else {
+          0
+        }
+      absorbing(
+        entries,
+        key,
+        level,
+        kept,
+        read_position(entries, key, level, kept, base, aware),
+        drop_count,
+        shift,
+      )
+    },
+  )
+}
+
+/// The position, counted after the root jump (cut to `kept` bits at the top
+/// node), that the removed branch reads: `base`, or when `restoring`, the one
+/// among the positions holding the opposite of the absorbed node's first bit that
+/// `base` points to.
+fn read_position(
+  entries: Entries,
+  key: ByteArray,
+  level: Int,
+  kept: Int,
+  base: Int,
+  restoring: Bool,
+) -> Int {
+  if restoring {
+    let top = root_indirect(entries)
+    let key_bits = key_to_bitpath(key)
+    if level < 0 {
+      reading(
+        bytearray.drop(key_bits, kept),
+        1 - first_bit(bytearray.drop(top.jump, kept)),
+        base,
+      )
+    } else {
+      expect Some((child, _)) = list.at(path_branches(entries, key), level)
+      reading(
+        bytearray.drop(key_bits, bytearray.length(top.jump)),
+        1 - first_bit(child.jump),
+        base,
+      )
+    }
+  } else {
+    base
+  }
+}
+
+/// The proof of `key` in which the sibling of the bottom step is the node of the
+/// tree at `level` on the key's path (the top node when `level` is -1), with
+/// `drop_count` of its first jump bits dropped, so that the bit the verifier
+/// prepends when it collapses the branch gives that node back. The bottom step
+/// reads the key bit at `read` (counted after the root jump) and consumes the
+/// bits from there to the end of the key, plus `shift`. At a level of the path
+/// the next step is the honest sibling of that level, consuming the bits
+/// between its branch and `read`, and the steps above it are honest. At the top
+/// node the root jump is cut to `kept` bits and there is no other step.
+pub fn absorbing(
+  entries: Entries,
+  key: ByteArray,
+  level: Int,
+  kept: Int,
+  read: Int,
+  drop_count: Int,
+  shift: Int,
+) -> Proof {
+  let top = root_indirect(entries)
+  let bits = 8 * bytearray.length(key)
+  if level < 0 {
+    Proof {
+      root_jump: bytearray.take(top.jump, kept),
+      steps: [
+        ProofStep {
+          consumed: bits - kept - read + shift,
+          sibling: Indirect {
+            jump: bytearray.drop(top.jump, kept + drop_count),
+            hash: top.hash,
+          },
+        },
+      ],
+    }
+  } else {
+    let path = path_branches(entries, key)
+    expect Some((child, sibling)) = list.at(path, level)
+    let above = list.take(path, level)
+    let position = branch_position(path, level)
+    Proof {
+      root_jump: top.jump,
+      steps: [
+        ProofStep {
+          consumed: bits - bytearray.length(top.jump) - read + shift,
+          sibling: Indirect {
+            jump: bytearray.drop(child.jump, drop_count),
+            hash: child.hash,
+          },
+        },
+        ProofStep { consumed: read - position, sibling },
+        ..list.reverse(
+          list.map(
+            above,
+            fn(branch) {
+              ProofStep {
+                consumed: 1 + bytearray.length(branch.1st.jump),
+                sibling: branch.2nd,
+              }
+            },
+          ),
+        )
+      ],
+    }
+  }
+}
+
+/// The position of the branch bit at `level` of the path, counted after the root
+/// jump.
+fn branch_position(path: List<(Indirect, Indirect)>, level: Int) -> Int {
+  list.foldl(
+    list.take(path, level),
+    0,
+    fn(branch, at) { at + 1 + bytearray.length(branch.1st.jump) },
+  )
+}
+
+fn first_bit(bits: ByteArray) -> Int {
+  if bytearray.length(bits) == 0 {
+    0
+  } else {
+    bytearray.at(bits, 0)
+  }
+}
+
+/// The position among the positions of `bits` that hold `wanted` which `draw`
+/// points to, or `draw` itself when there is none.
+fn reading(bits: ByteArray, wanted: Int, draw: Int) -> Int {
+  let positions =
+    list.filter(
+      list.range(0, bytearray.length(bits) - 1),
+      fn(at) { bytearray.at(bits, at) == wanted },
+    )
+  when list.at(positions, math.abs(draw) % ( list.length(positions) + 1 )) is {
+    Some(at) -> at
+    None -> draw
+  }
+}
+
+/// Like `reading`, among the positions from `from` on.
+fn reading_after(bits: ByteArray, wanted: Int, from: Int, draw: Int) -> Int {
+  let positions =
+    list.filter(
+      list.range(from, bytearray.length(bits) - 1),
+      fn(at) { bytearray.at(bits, at) == wanted },
+    )
+  when list.at(positions, math.abs(draw) % ( list.length(positions) + 1 )) is {
+    Some(at) -> at
+    None -> draw
+  }
+}
+
+// -----------------------------------------------------------------------------
+// ------------------------------------------------------------ Honest insertions
+// -----------------------------------------------------------------------------
+
+/// A key about to be added to a tree, with the proof of its absence that the
+/// reference trie builds (the proof of the key in the tree that holds it), and
+/// the root hash of the tree after the addition.
+pub type Insertion {
+  before: CSMT,
+  after: ByteArray,
+  key: ByteArray,
+  value: ByteArray,
+  proof: Proof,
+}
+
+fn insertion(entries: Entries, key: ByteArray) -> Insertion {
+  expect Some((_, value)) = list.find(entries, fn(entry) { entry.1st == key })
+  Insertion {
+    before: from_root(
+      root_of(list.filter(entries, fn(entry) { entry.1st != key })),
+    ),
+    after: root_of(entries),
+    key,
+    value,
+    proof: proof_of(entries, key),
+  }
+}
+
+/// Any key of a tree, taken out of it, or any key of the tree's length that the
+/// tree does not hold, added to it.
+pub fn honest_insertion() -> Fuzzer<Insertion> {
+  fuzz.either(taken_out_insertion(), absent_key_insertion())
+}
+
+fn taken_out_insertion() -> Fuzzer<Insertion> {
+  let entries <- fuzz.and_then(fuzz.either(tree(), close_tree()))
+  fuzz.map(
+    fuzz.pick(entries),
+    fn(picked) {
+      let (_, (key, _)) = picked
+      insertion(entries, key)
+    },
+  )
+}
+
+fn absent_key_insertion() -> Fuzzer<Insertion> {
+  let entries <- fuzz.and_then(fuzz.either(tree(), close_tree()))
+  let picked <- fuzz.and_then(fuzz.pick(entries))
+  let (_, (anchor, _)) = picked
+  let key <- fuzz.and_then(same_length_key(entries, anchor))
+  fuzz.map(value(), fn(value) { insertion(put(entries, key, value), key) })
+}
+
+/// The smallest key of a tree, taken out of it.
+pub fn honest_minimum_insertion() -> Fuzzer<Insertion> {
+  fuzz.map(
+    fuzz.either(tree(), close_tree()),
+    fn(entries) { insertion(entries, extremum(held_keys(entries), Less)) },
+  )
+}
+
+/// The largest key of a tree, taken out of it.
+pub fn honest_maximum_insertion() -> Fuzzer<Insertion> {
+  fuzz.map(
+    fuzz.either(tree(), close_tree()),
+    fn(entries) { insertion(entries, extremum(held_keys(entries), Greater)) },
+  )
+}
+
+/// A key of a tree of at least two keys that is not its smallest, taken out of it.
+pub fn non_minimum_insertion() -> Fuzzer<Insertion> {
+  not_extreme_insertion(Less)
+}
+
+/// A key of a tree of at least two keys that is not its largest, taken out of it.
+pub fn non_maximum_insertion() -> Fuzzer<Insertion> {
+  not_extreme_insertion(Greater)
+}
+
+fn not_extreme_insertion(side: Ordering) -> Fuzzer<Insertion> {
+  let entries <-
+    fuzz.and_then(
+      fuzz.such_that(
+        fuzz.either3(tree(), close_tree(), crooked_tree(side)),
+        fn(entries) { list.length(entries) >= 2 },
+      ),
+    )
+  fuzz.map(
+    fuzz.pick(entries),
+    fn(picked) {
+      let (_, (any, _)) = picked
+      let keys = held_keys(entries)
+      insertion(
+        entries,
+        if any == extremum(keys, side) {
+          extremum(
+            keys,
+            if side == Less {
+              Greater
+            } else {
+              Less
+            },
+          )
+        } else {
+          any
+        },
+      )
+    },
+  )
+}
+
+/// A tree with a key that takes the way an extremum does at every branch but
+/// the root, where it takes the other way, so that only the top of its path
+/// betrays it: below the root it shares a branch with keys that leave it at a
+/// few later bits.
+fn crooked_tree(side: Ordering) -> Fuzzer<Entries> {
+  let width <- fuzz.and_then(fuzz.int_between(1, 3))
+  let flips <-
+    fuzz.and_then(fuzz.list_between(fuzz.int_between(2, 8 * width - 1), 2, 3))
+  let values <- fuzz.map(fuzz.list_between(value(), 6, 6))
+  let right =
+    if side == Less {
+      0
+    } else {
+      1
+    }
+  let key =
+    pack_bits(
+      bytearray.concat(
+        bytearray.push(#"", 1 - right),
+        repeat(right, 8 * width - 1),
+      ),
+    )
+  let straight = pack_bits(repeat(right, 8 * width))
+  let others = list.map(flips, fn(at) { branch_off(key, at, repeat(0, width)) })
+  list.zip(list.unique([key, straight, ..others]), values)
 }

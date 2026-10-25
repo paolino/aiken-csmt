@@ -132,6 +132,42 @@ fn walk(leaves: List<Held>, path: ByteArray) -> (ByteArray, List<ProofStep>) {
   }
 }
 
+/// The indirect of the top node of the tree holding `entries`: the root jump
+/// and the hash the root hash is taken of.
+pub fn root_indirect(entries: Entries) -> Indirect {
+  node(held(entries))
+}
+
+/// The branches on the path of `key`, from the root down: for each, the child
+/// on the key's side and the child on the other side.
+pub fn path_branches(
+  entries: Entries,
+  key: ByteArray,
+) -> List<(Indirect, Indirect)> {
+  branches(held(entries), key_to_bitpath(key))
+}
+
+fn branches(leaves: List<Held>, path: ByteArray) -> List<(Indirect, Indirect)> {
+  when leaves is {
+    [] -> []
+    [_] -> []
+    _ -> {
+      let shared = shared_length(leaves)
+      let (left, right) = split(leaves, shared)
+      let (mine, other) =
+        if bytearray.at(path, shared) == 0 {
+          (left, right)
+        } else {
+          (right, left)
+        }
+      [
+        (node(mine), node(other)),
+        ..branches(mine, bytearray.drop(path, shared + 1))
+      ]
+    }
+  }
+}
+
 /// Every internal node's preimage: the serialized pair of its children, which
 /// is also the value that hashes to the node.
 pub fn branch_preimages(entries: Entries) -> List<ByteArray> {

@@ -5,8 +5,8 @@
 - [x] inclusion-range-checks with failing cases kept
 
 ## exclusion-soundness
-- [ ] exclusion-soundness-properties (miss-rejects-held-key, insert-rejects-held-key, push-rejects-held-key)
-- [ ] exclusion-range-checks with failing cases kept
+- [x] exclusion-soundness-properties (miss-rejects-held-key, insert-rejects-held-key, push-rejects-held-key)
+- [x] exclusion-range-checks with failing cases kept
 
 ## relaxation-check
 - [ ] planted relaxations killed in CI (range-check-kills-relaxation)

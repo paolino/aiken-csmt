@@ -328,56 +328,115 @@ fn fold_including_extremum(
 // -----------------------------------------------------------------------------
 
 /// Compute the root hash assuming the key is NOT present.
-///
-/// At the bottom level, the sibling absorbs the branch (its jump extends
-/// with the opposite direction bit). Upper levels combine normally.
 fn excluding(key: ByteArray, proof: Proof) -> ByteArray {
+  do_excluding(None, key, proof)
+}
+
+/// Remove the key from the path the proof describes and hash what is left.
+///
+/// The proof is the one the key has in the tree that holds it: its lowest step
+/// is the branch the key hangs from, whose other child, the sibling, takes the
+/// branch's place. That child keeps the key bits between the branch above (the
+/// start of the key below the root jump, when there is none) and the removed
+/// branch, then the bit the key did not take, then its own jump, so that no key
+/// bit goes unhashed. The steps above the lowest consume at least one bit each
+/// and end at the start of the key, as the including folds require. A lowest
+/// step that points outside the key is refused by the index read, and a root
+/// jump is hashed as given: one that is not the key's can only reproduce the
+/// root of a tree that does not hold the key.
+///
+/// With an `expected_dir`, every branch the key sits at must go that way.
+fn do_excluding(
+  expected_dir: Option<Int>,
+  key: ByteArray,
+  proof: Proof,
+) -> ByteArray {
   let key_bits = key_to_bitpath(key)
   let rj_len = bytearray.length(proof.root_jump)
   let key_after_root =
     slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
-  do_excluding(key_after_root, proof)
-}
-
-fn do_excluding(key_after_root: ByteArray, proof: Proof) -> ByteArray {
   when proof.steps is {
     // No steps: tree is empty without this element
     [] -> null_hash
 
     // At least one step: collapse the bottom branch
     [bottom_step, ..rest_steps] -> {
-      let cursor = bytearray.length(key_after_root)
-      let bottom_cursor = cursor - bottom_step.consumed
+      let bottom_cursor =
+        bytearray.length(key_after_root) - bottom_step.consumed
       let direction = bytearray.at(key_after_root, bottom_cursor)
-      let opposite = 1 - direction
-
-      // Sibling absorbs the branch: prepend opposite direction to its jump
-      let collapsed =
-        Indirect {
-          jump: cons_bytearray(opposite, bottom_step.sibling.jump),
-          hash: bottom_step.sibling.hash,
-        }
+      expect goes(expected_dir, direction)
 
       when rest_steps is {
         // Collapsed node IS the whole tree
-        [] ->
+        [] -> {
+          let collapsed =
+            collapse(key_after_root, 0, bottom_cursor, direction, bottom_step)
           root_hash(
             bytearray.concat(proof.root_jump, collapsed.jump),
             collapsed.hash,
           )
+        }
 
         // Use collapsed as our indirect at the next level, then normal
         [next_step, ..upper_steps] -> {
+          expect next_step.consumed >= 1
           let next_cursor = bottom_cursor - next_step.consumed
           let next_direction = bytearray.at(key_after_root, next_cursor)
+          expect goes(expected_dir, next_direction)
+          let collapsed =
+            collapse(
+              key_after_root,
+              next_cursor + 1,
+              bottom_cursor,
+              direction,
+              bottom_step,
+            )
           let acc =
             add_with_direction(next_direction, collapsed, next_step.sibling)
           let root_value =
-            fold_including(acc, key_after_root, next_cursor, upper_steps)
+            when expected_dir is {
+              None ->
+                fold_including(acc, key_after_root, next_cursor, upper_steps)
+              Some(dir) ->
+                fold_including_extremum(
+                  dir,
+                  acc,
+                  key_after_root,
+                  next_cursor,
+                  upper_steps,
+                )
+            }
           root_hash(proof.root_jump, root_value)
         }
       }
     }
+  }
+}
+
+/// The sibling of the removed branch in the branch's place: the key bits from
+/// `above` (just after the branch bit above) to the removed branch bit, the
+/// bit the key did not take, and the sibling's own jump.
+fn collapse(
+  key_after_root: ByteArray,
+  above: Int,
+  bottom_cursor: Int,
+  direction: Int,
+  bottom_step: ProofStep,
+) -> Indirect {
+  Indirect {
+    jump: bytearray.concat(
+      slice_bytearray(above, bottom_cursor - above, key_after_root),
+      cons_bytearray(1 - direction, bottom_step.sibling.jump),
+    ),
+    hash: bottom_step.sibling.hash,
+  }
+}
+
+/// Whether a branch bit is the one an extremum requires, if one is required.
+fn goes(expected_dir: Option<Int>, direction: Int) -> Bool {
+  when expected_dir is {
+    None -> True
+    Some(dir) -> direction == dir
   }
 }
 
@@ -388,75 +447,13 @@ fn do_excluding(key_after_root: ByteArray, proof: Proof) -> ByteArray {
 /// Like `excluding`, but asserts the key is the minimum: every
 /// branch direction must be 0 (left).
 fn excluding_minimum(key: ByteArray, proof: Proof) -> ByteArray {
-  excluding_extremum(0, key, proof)
+  do_excluding(Some(0), key, proof)
 }
 
 /// Like `excluding`, but asserts the key is the maximum: every
 /// branch direction must be 1 (right).
 fn excluding_maximum(key: ByteArray, proof: Proof) -> ByteArray {
-  excluding_extremum(1, key, proof)
-}
-
-/// Like `excluding`, but asserts every branch direction equals `expected_dir`.
-fn excluding_extremum(
-  expected_dir: Int,
-  key: ByteArray,
-  proof: Proof,
-) -> ByteArray {
-  let key_bits = key_to_bitpath(key)
-  let rj_len = bytearray.length(proof.root_jump)
-  let key_after_root =
-    slice_bytearray(rj_len, bytearray.length(key_bits) - rj_len, key_bits)
-  do_excluding_extremum(expected_dir, key_after_root, proof)
-}
-
-fn do_excluding_extremum(
-  expected_dir: Int,
-  key_after_root: ByteArray,
-  proof: Proof,
-) -> ByteArray {
-  when proof.steps is {
-    [] -> null_hash
-
-    [bottom_step, ..rest_steps] -> {
-      let cursor = bytearray.length(key_after_root)
-      let bottom_cursor = cursor - bottom_step.consumed
-      let direction = bytearray.at(key_after_root, bottom_cursor)
-      expect direction == expected_dir
-      let opposite = 1 - direction
-
-      let collapsed =
-        Indirect {
-          jump: cons_bytearray(opposite, bottom_step.sibling.jump),
-          hash: bottom_step.sibling.hash,
-        }
-
-      when rest_steps is {
-        [] ->
-          root_hash(
-            bytearray.concat(proof.root_jump, collapsed.jump),
-            collapsed.hash,
-          )
-
-        [next_step, ..upper_steps] -> {
-          let next_cursor = bottom_cursor - next_step.consumed
-          let next_direction = bytearray.at(key_after_root, next_cursor)
-          expect next_direction == expected_dir
-          let acc =
-            add_with_direction(next_direction, collapsed, next_step.sibling)
-          let root_value =
-            fold_including_extremum(
-              expected_dir,
-              acc,
-              key_after_root,
-              next_cursor,
-              upper_steps,
-            )
-          root_hash(proof.root_jump, root_value)
-        }
-      }
-    }
-  }
+  do_excluding(Some(1), key, proof)
 }
 
 // -----------------------------------------------------------------------------
